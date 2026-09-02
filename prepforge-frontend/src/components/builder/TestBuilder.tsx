@@ -103,11 +103,11 @@ export function TestBuilder({ onTestCreated }: TestBuilderProps) {
     setGenerating(true);
 
     const config: TestConfig = {
-      topics: selectedTopics,
-      subTopics: selectedSubTopics,
+      topics: [],
+      subTopics: [],
       experienceLevel,
       difficulty,
-      questionTypes,
+      questionTypes: ["Conceptual MCQ", "Output-based", "Scenario-based", "Code analysis"],
       questionCount,
       timeLimitMinutes,
       promptDescription: interpretation?.originalPrompt,
@@ -233,11 +233,6 @@ export function TestBuilder({ onTestCreated }: TestBuilderProps) {
             <DifficultySelector
               value={difficulty}
               onChange={setDifficulty}
-            />
-
-            <QuestionTypeSelector
-              value={questionTypes}
-              onChange={setQuestionTypes}
             />
 
             <TestParameters
