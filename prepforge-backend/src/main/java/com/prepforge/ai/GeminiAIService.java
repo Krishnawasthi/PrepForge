@@ -259,10 +259,6 @@ public class GeminiAIService implements AIService {
         return null;
     }
 
-    /**
-     * Extracts the JSON text from Gemini's response envelope.
-     * Handles cases where Gemini wraps output in markdown code fences.
-     */
     private String extractJsonText(String response) {
         try {
             JsonNode root = objectMapper.readTree(response);
@@ -270,29 +266,31 @@ public class GeminiAIService implements AIService {
                     .path("content").path("parts").get(0)
                     .path("text").asText();
 
-            // Strip markdown code fences if present: ```json ... ``` or ``` ... ```
-            if (text.contains("```")) {
-                Pattern fence = Pattern.compile("```(?:json)?\\s*([\\s\\S]*?)\\s*```");
-                Matcher m = fence.matcher(text);
-                if (m.find()) {
-                    return m.group(1).trim();
-                }
+            // Strip markdown code fences if wrapped at the outer level
+            String trimmed = text.trim();
+            if (trimmed.startsWith("```json")) {
+                trimmed = trimmed.substring(7);
+            } else if (trimmed.startsWith("```")) {
+                trimmed = trimmed.substring(3);
+            }
+            if (trimmed.endsWith("```")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 3);
             }
 
-            // Find the JSON array or object boundaries
-            int start = text.indexOf('[');
-            int startObj = text.indexOf('{');
-            if (start == -1 && startObj == -1) return text.trim();
-
-            if (start != -1 && (startObj == -1 || start <= startObj)) {
-                int end = text.lastIndexOf(']');
-                if (end > start) return text.substring(start, end + 1).trim();
-            } else {
-                int end = text.lastIndexOf('}');
-                if (end > startObj) return text.substring(startObj, end + 1).trim();
+            // Find the outermost JSON array or object
+            int startArray = trimmed.indexOf('[');
+            int endArray = trimmed.lastIndexOf(']');
+            if (startArray != -1 && endArray > startArray) {
+                return trimmed.substring(startArray, endArray + 1).trim();
             }
 
-            return text.trim();
+            int startObj = trimmed.indexOf('{');
+            int endObj = trimmed.lastIndexOf('}');
+            if (startObj != -1 && endObj > startObj) {
+                return trimmed.substring(startObj, endObj + 1).trim();
+            }
+
+            return trimmed.trim();
         } catch (Exception e) {
             log.warn("JSON text extraction from Gemini response failed: {}", e.getMessage());
             return null;
