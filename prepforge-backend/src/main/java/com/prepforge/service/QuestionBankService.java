@@ -54,7 +54,7 @@ public class QuestionBankService {
         while (dynamicList.size() < targetCount && attempts < maxAttempts) {
             attempts++;
             String topic = effectiveTopics.get(dynamicList.size() % effectiveTopics.size());
-            int variationIndex = (attempts / effectiveTopics.size()) % 15;
+            int variationIndex = attempts % 20;
 
             Question q = createDiverseParametricQuestion(topic, experienceLevel, difficulty, variationIndex, random);
             if (q != null && generatedQuestions.add(q.getQuestion().trim().toLowerCase())) {
@@ -62,7 +62,74 @@ public class QuestionBankService {
             }
         }
 
+        // Guaranteed fallback if still under target count: synthesize unique algorithmic / interview scenarios
+        int counter = 1;
+        while (dynamicList.size() < targetCount) {
+            String topic = effectiveTopics.get(dynamicList.size() % effectiveTopics.size());
+            Question extra = createAlgorithmicOutputQuestion(topic, experienceLevel, difficulty, counter++, random);
+            if (generatedQuestions.add(extra.getQuestion().trim().toLowerCase())) {
+                dynamicList.add(extra);
+            }
+        }
+
         return dynamicList;
+    }
+
+    private Question createAlgorithmicOutputQuestion(String topic, String exp, String diff, int index, Random random) {
+        String uid = "algo_" + System.currentTimeMillis() + "_" + index;
+        int a = random.nextInt(2, 9);
+        int b = a * random.nextInt(2, 5);
+        int c = b + random.nextInt(1, 4);
+
+        if (index % 3 == 0) {
+            int shift = random.nextInt(1, 4);
+            int shiftedVal = a << shift;
+            return createQuestion(uid,
+                    "What is the output of evaluating `(" + a + " << " + shift + ") ^ " + b + "` in Java?",
+                    List.of(String.valueOf(shiftedVal ^ b), String.valueOf(shiftedVal | b), String.valueOf(shiftedVal & b), String.valueOf(a ^ b)),
+                    String.valueOf(shiftedVal ^ b),
+                    "Left shift (" + a + " << " + shift + ") shifts bits left by " + shift + " positions, producing " + shiftedVal + ". Then bitwise XOR (^) with " + b + " produces " + (shiftedVal ^ b) + ".",
+                    Map.of("A", "Correct calculation of bitwise shift and XOR.",
+                            "B", "Incorrect. Bitwise OR (|) was evaluated instead of XOR (^).",
+                            "C", "Incorrect. Bitwise AND (&) was evaluated instead of XOR (^).",
+                            "D", "Incorrect. The bitwise shift was omitted."),
+                    topic, "java-syntax", diff, exp, "Output-based",
+                    "Bitwise operations frequently appear in senior Java coding rounds testing precision under pressure.");
+        } else if (index % 3 == 1) {
+            int start = random.nextInt(1, 5);
+            int limit = random.nextInt(5, 10);
+            int sum = 0;
+            for (int k = start; k < start + limit; k++) if (k % 2 == 0) sum += k;
+
+            return createQuestion(uid,
+                    "What is the result of the following Java Stream pipeline?\n\n```java\nint sum = IntStream.range(" + start + ", " + (start + limit) + ")\n    .filter(n -> n % 2 == 0)\n    .sum();\nSystem.out.println(sum);\n```",
+                    List.of(String.valueOf(sum), String.valueOf(sum + start), String.valueOf(sum * 2), "Compilation Error"),
+                    String.valueOf(sum),
+                    "IntStream.range creates a half-open interval [" + start + ", " + (start + limit) + "). The filter retains even numbers, and sum() aggregates them to " + sum + ".",
+                    Map.of("A", "Correct. Evaluates even numbers in the specified half-open interval.",
+                            "B", "Incorrect. Range in Java is half-open (exclusive of upper bound).",
+                            "C", "Incorrect calculation of stream reduction.",
+                            "D", "Incorrect. IntStream syntax is valid Java 8+."),
+                    topic, "stream-operations", diff, exp, "Output-based",
+                    "Remember that IntStream.range(a, b) is exclusive of b, while IntStream.rangeClosed(a, b) is inclusive of b.");
+        } else {
+            int capacity = (1 << random.nextInt(4, 7));
+            int expectedThreshold = (int) (capacity * 0.75f);
+            return createQuestion(uid,
+                    "A `HashMap` is instantiated with `new HashMap<>(" + capacity + ")`. At what entry count will the table resize by default?",
+                    List.of(String.valueOf(expectedThreshold) + " entries (based on 0.75 default load factor)",
+                            String.valueOf(capacity) + " entries (when capacity is 100% full)",
+                            String.valueOf(capacity * 2) + " entries",
+                            "16 entries (default fixed threshold)"),
+                    String.valueOf(expectedThreshold) + " entries (based on 0.75 default load factor)",
+                    "The resize threshold is calculated as capacity (" + capacity + ") * load factor (0.75) = " + expectedThreshold + ". When map size exceeds this threshold, the bucket array doubles in size.",
+                    Map.of("A", "Correct. Threshold = capacity * default load factor (0.75).",
+                            "B", "Incorrect. Resizing occurs before 100% capacity to prevent excessive clustering.",
+                            "C", "Incorrect. Doubling occurs after reaching the threshold, not at double capacity.",
+                            "D", "Incorrect. Initial capacity was explicitly set to " + capacity + "."),
+                    topic, "hashmap-internals", diff, exp, "Conceptual MCQ",
+                    "Always mention that initial capacity should be sized as (expectedEntries / 0.75) + 1 to avoid runtime rehashing in production.");
+        }
     }
 
     private Question createDiverseParametricQuestion(String topic, String exp, String diff, int variant, Random random) {

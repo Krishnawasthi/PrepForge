@@ -1,5 +1,6 @@
 package com.prepforge.config;
 
+import io.netty.resolver.DefaultAddressResolverGroup;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,12 +18,13 @@ public class WebClientConfig {
     @Value("${gemini.api.base-url:https://generativelanguage.googleapis.com}")
     private String geminiBaseUrl;
 
-    @Value("${gemini.api.timeout-ms:30000}")
+    @Value("${gemini.api.timeout-ms:60000}")
     private int timeoutMs;
 
     @Bean
     public WebClient geminiWebClient() {
         HttpClient httpClient = HttpClient.create()
+                .resolver(DefaultAddressResolverGroup.INSTANCE)
                 .responseTimeout(Duration.ofMillis(timeoutMs));
 
         return WebClient.builder()
