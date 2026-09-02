@@ -174,6 +174,84 @@ public class TestService {
                 .build();
     }
 
+    public QuestionDto replaceQuestionInTest(String testId, String questionId, QuestionReplaceRequest request) {
+        TestSession session = testSessionCache.get(testId);
+        if (session == null) {
+            session = testRepository.findByTestId(testId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Test not found with ID: " + testId));
+        }
+
+        Question original = questionService.findById(questionId);
+
+        String topic = (original != null && original.getTopic() != null)
+                ? original.getTopic()
+                : (request != null && request.getTopic() != null ? request.getTopic() : session.getTopics().get(0));
+
+        String subTopic = (original != null && original.getSubTopic() != null)
+                ? original.getSubTopic()
+                : (request != null ? request.getSubTopic() : null);
+
+        String difficulty = (original != null && original.getDifficulty() != null)
+                ? original.getDifficulty()
+                : (request != null && request.getDifficulty() != null ? request.getDifficulty() : session.getDifficulty());
+
+        String experienceLevel = (original != null && original.getExperienceLevel() != null)
+                ? original.getExperienceLevel()
+                : (request != null && request.getExperienceLevel() != null ? request.getExperienceLevel() : session.getExperienceLevel());
+
+        String questionType = (original != null && original.getQuestionType() != null)
+                ? original.getQuestionType()
+                : (request != null && request.getQuestionType() != null ? request.getQuestionType() : "Conceptual MCQ");
+
+        String concept = (request != null && request.getConcept() != null && !request.getConcept().isBlank())
+                ? request.getConcept()
+                : (subTopic != null ? subTopic : topic);
+
+        // Gather all previously used question texts in the current test to guarantee 0 duplicates
+        List<String> usedQuestions = new ArrayList<>();
+        if (original != null) {
+            usedQuestions.add(original.getQuestion());
+        }
+        if (session.getQuestionIds() != null) {
+            List<Question> existingQuestions = questionService.findByIds(session.getQuestionIds());
+            for (Question eq : existingQuestions) {
+                if (eq != null && eq.getQuestion() != null) {
+                    usedQuestions.add(eq.getQuestion());
+                }
+            }
+        }
+        if (request != null && request.getPreviouslyUsedQuestions() != null) {
+            usedQuestions.addAll(request.getPreviouslyUsedQuestions());
+        }
+
+        // Generate replacement question preserving concept and difficulty
+        Question replacement = questionService.generateReplacementQuestion(
+                topic, subTopic, concept, difficulty, experienceLevel, questionType, usedQuestions
+        );
+
+        // Replace the question ID in session without changing total question count
+        if (session.getQuestionIds() != null && !session.getQuestionIds().isEmpty()) {
+            int idx = session.getQuestionIds().indexOf(questionId);
+            if (idx != -1) {
+                session.getQuestionIds().set(idx, replacement.getId());
+            } else {
+                session.getQuestionIds().add(replacement.getId());
+            }
+        } else {
+            session.setQuestionIds(new ArrayList<>(List.of(replacement.getId())));
+        }
+
+        testSessionCache.put(testId, session);
+        try {
+            testRepository.save(session);
+        } catch (Exception ignored) {}
+
+        log.info("Replaced question [{}] with [{}] in test [{}]", questionId, replacement.getId(), testId);
+
+        // Return with correct answers withheld during active test taking
+        return questionService.mapToDto(replacement, false);
+    }
+
     public TestResultDto submitTest(String testId, TestSubmissionRequest request) {
         return scoringService.evaluateAndScoreTest(testId, request);
     }

@@ -24,4 +24,18 @@ public interface AIService {
             int count,
             String promptDescription
     );
+
+    /**
+     * Generates a single replacement question that tests the exact same underlying concept
+     * while altering the scenario, code, values, and wording.
+     */
+    CompletableFuture<Map<String, Object>> generateReplacementQuestion(
+            String topic,
+            String subTopic,
+            String concept,
+            String difficulty,
+            String experienceLevel,
+            String questionType,
+            List<String> usedQuestions
+    );
 }

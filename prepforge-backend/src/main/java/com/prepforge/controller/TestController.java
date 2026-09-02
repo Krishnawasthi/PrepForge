@@ -44,6 +44,15 @@ public class TestController {
         return ResponseEntity.ok(ApiResponse.success(testDetail));
     }
 
+    @PostMapping("/tests/{testId}/questions/{questionId}/replace")
+    public ResponseEntity<ApiResponse<QuestionDto>> replaceQuestion(
+            @PathVariable String testId,
+            @PathVariable String questionId,
+            @RequestBody(required = false) QuestionReplaceRequest request) {
+        QuestionDto replacement = testService.replaceQuestionInTest(testId, questionId, request);
+        return ResponseEntity.ok(ApiResponse.success("Question replaced successfully", replacement));
+    }
+
     @PostMapping("/tests/{testId}/submit")
     public ResponseEntity<ApiResponse<TestResultDto>> submitTest(
             @PathVariable String testId,

@@ -19,6 +19,7 @@ public class QuestionService {
     private final QuestionRepository questionRepository;
     private final QuestionBankService questionBankService;
     private final AIService aiService;
+    private final Map<String, Question> questionCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public QuestionService(
             QuestionRepository questionRepository,
@@ -117,10 +118,17 @@ public class QuestionService {
         // ── STEP 4: Final Shuffle & Option Letter Randomization ────────────────
         Collections.shuffle(resultQuestions);
 
-        return resultQuestions.stream()
+        List<Question> finalQuestions = resultQuestions.stream()
                 .limit(requestedCount)
                 .map(this::randomizeQuestionOptions)
                 .collect(Collectors.toList());
+
+        finalQuestions.forEach(q -> questionCache.put(q.getId(), q));
+        try {
+            questionRepository.saveAll(finalQuestions);
+        } catch (Exception ignored) {}
+
+        return finalQuestions;
     }
 
     public List<Question> prepareQuestionsForTest(
@@ -229,15 +237,96 @@ public class QuestionService {
         return true;
     }
 
-    public List<Question> findByIds(List<String> ids) {
+    public Question findById(String id) {
+        if (id == null) return null;
+        Question q = questionCache.get(id);
+        if (q != null) return q;
         try {
-            List<Question> list = questionRepository.findByIdIn(ids);
-            if (!list.isEmpty()) return list;
+            Optional<Question> opt = questionRepository.findById(id);
+            if (opt.isPresent()) {
+                questionCache.put(id, opt.get());
+                return opt.get();
+            }
         } catch (Exception ignored) {}
-
         return questionBankService.getCuratedQuestionBank().stream()
-                .filter(q -> ids.contains(q.getId()))
-                .collect(Collectors.toList());
+                .filter(item -> id.equals(item.getId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    public List<Question> findByIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) return Collections.emptyList();
+        List<Question> result = new ArrayList<>();
+        for (String id : ids) {
+            Question q = findById(id);
+            if (q != null) {
+                result.add(q);
+            }
+        }
+        return result;
+    }
+
+    public Question generateReplacementQuestion(
+            String topic,
+            String subTopic,
+            String concept,
+            String difficulty,
+            String experienceLevel,
+            String questionType,
+            List<String> usedQuestions) {
+
+        Set<String> normalizedUsed = new HashSet<>();
+        if (usedQuestions != null) {
+            for (String u : usedQuestions) {
+                if (u != null && !u.isBlank()) {
+                    normalizedUsed.add(normalizeQuestionText(u));
+                }
+            }
+        }
+
+        // 1. Try Gemini AI with up to 3 attempts
+        try {
+            for (int attempt = 0; attempt < 3; attempt++) {
+                Map<String, Object> map = aiService.generateReplacementQuestion(
+                        topic, subTopic, concept, difficulty, experienceLevel, questionType, usedQuestions
+                ).get(15, java.util.concurrent.TimeUnit.SECONDS);
+
+                if (map != null && !map.isEmpty()) {
+                    Question candidate = mapFromAiResponse(map, List.of(topic));
+                    if (isValidQuestion(candidate)) {
+                        String norm = normalizeQuestionText(candidate.getQuestion());
+                        if (!normalizedUsed.contains(norm)) {
+                            candidate = randomizeQuestionOptions(candidate);
+                            questionCache.put(candidate.getId(), candidate);
+                            try { questionRepository.save(candidate); } catch (Exception ignored) {}
+                            log.info("Successfully generated AI replacement question for concept [{}]: {}", concept, candidate.getId());
+                            return candidate;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Gemini replacement question generation note: {}", e.getMessage());
+        }
+
+        // 2. Fallback: Parametric Question Engine with Concept Preservation
+        log.info("Generating parametric replacement question preserving concept [{}] for topic [{}]", concept, topic);
+        for (int retry = 0; retry < 5; retry++) {
+            Question fallback = questionBankService.createAlgorithmicOutputQuestion(topic, difficulty, experienceLevel);
+            if (fallback != null) {
+                String norm = normalizeQuestionText(fallback.getQuestion());
+                if (!normalizedUsed.contains(norm)) {
+                    if (subTopic != null && !subTopic.isBlank()) fallback.setSubTopic(subTopic);
+                    if (concept != null && !concept.isBlank()) fallback.setInterviewTip("Core concept tested: " + concept);
+                    fallback = randomizeQuestionOptions(fallback);
+                    questionCache.put(fallback.getId(), fallback);
+                    try { questionRepository.save(fallback); } catch (Exception ignored) {}
+                    return fallback;
+                }
+            }
+        }
+
+        throw new com.prepforge.exception.AppException("We couldn't generate a new question right now. Please try again.");
     }
 
     public QuestionDto mapToDto(Question q, boolean includeAnswers) {

@@ -103,8 +103,8 @@ export function TestBuilder({ onTestCreated }: TestBuilderProps) {
     setGenerating(true);
 
     const config: TestConfig = {
-      topics: [],
-      subTopics: [],
+      topics: selectedTopics,
+      subTopics: selectedSubTopics,
       experienceLevel,
       difficulty,
       questionTypes: ["Conceptual MCQ", "Output-based", "Scenario-based", "Code analysis"],
@@ -225,6 +225,14 @@ export function TestBuilder({ onTestCreated }: TestBuilderProps) {
         {/* Mode 2: Manual Guided Customizer */}
         {mode === "manual" && (
           <div className="space-y-8">
+            <TopicSelector
+              topics={topics}
+              selectedTopics={selectedTopics}
+              onChange={setSelectedTopics}
+              selectedSubTopics={selectedSubTopics}
+              onSubTopicsChange={setSelectedSubTopics}
+            />
+
             <ExperienceSelector
               value={experienceLevel}
               onChange={setExperienceLevel}

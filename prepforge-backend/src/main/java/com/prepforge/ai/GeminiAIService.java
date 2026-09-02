@@ -250,6 +250,107 @@ public class GeminiAIService implements AIService {
         }
     }
 
+    // ---- Replacement Question Generation (Same Concept, Fresh Content) -----
+
+    @Override
+    public CompletableFuture<Map<String, Object>> generateReplacementQuestion(
+            String topic,
+            String subTopic,
+            String concept,
+            String difficulty,
+            String experienceLevel,
+            String questionType,
+            List<String> usedQuestions
+    ) {
+        String apiKey = getEffectiveApiKey();
+        if (apiKey == null) return CompletableFuture.completedFuture(Collections.emptyMap());
+
+        return CompletableFuture.supplyAsync(() -> {
+            StringBuilder usedBuilder = new StringBuilder();
+            if (usedQuestions != null && !usedQuestions.isEmpty()) {
+                usedBuilder.append("PREVIOUSLY SHOWN QUESTIONS (DO NOT DUPLICATE OR PARAPHRASE ANY OF THESE):\n");
+                for (int i = 0; i < Math.min(usedQuestions.size(), 10); i++) {
+                    usedBuilder.append("- ").append(usedQuestions.get(i).replace("\n", " ")).append("\n");
+                }
+            }
+
+            String prompt = String.format(
+                    "You are an expert Java technical interviewer creating a replacement question.\n" +
+                    "Generate a COMPLETELY NEW question that tests the EXACT SAME underlying concept as the original question.\n\n" +
+                    "CRITICAL CONSTRAINTS:\n" +
+                    "- Topic: %s\n" +
+                    "- SubTopic: %s\n" +
+                    "- Concept to test: %s\n" +
+                    "- Difficulty: %s\n" +
+                    "- Experience Level: %s\n" +
+                    "- Question Type: %s\n\n" +
+                    "%s\n" +
+                    "VARIATION REQUIREMENTS:\n" +
+                    "- Preserve the topic, subtopic, concept, difficulty, and experience level.\n" +
+                    "- Change the question wording, scenario, code snippet, variable names, data values, execution trace, and answer choices.\n" +
+                    "- Do NOT produce or lightly paraphrase any of the previously shown questions.\n" +
+                    "- For code/output questions: use different code, variables, and values while testing the same underlying concept.\n\n" +
+                    "OUTPUT FORMAT:\n" +
+                    "Return a SINGLE valid JSON object with these EXACT keys:\n" +
+                    "{\n" +
+                    "  \"question\": \"Question statement with optional code snippet in markdown\",\n" +
+                    "  \"options\": [\"Option A text\", \"Option B text\", \"Option C text\", \"Option D text\"],\n" +
+                    "  \"correctAnswer\": \"Exact text of the correct option\",\n" +
+                    "  \"explanation\": \"Detailed technical explanation why this is correct\",\n" +
+                    "  \"optionExplanations\": {\n" +
+                    "    \"Option A text\": \"Why A is correct or incorrect\",\n" +
+                    "    \"Option B text\": \"Why B is correct or incorrect\",\n" +
+                    "    \"Option C text\": \"Why C is correct or incorrect\",\n" +
+                    "    \"Option D text\": \"Why D is correct or incorrect\"\n" +
+                    "  },\n" +
+                    "  \"topic\": \"%s\",\n" +
+                    "  \"subTopic\": \"%s\",\n" +
+                    "  \"concept\": \"%s\",\n" +
+                    "  \"difficulty\": \"%s\",\n" +
+                    "  \"experienceLevel\": \"%s\",\n" +
+                    "  \"questionType\": \"%s\",\n" +
+                    "  \"interviewTip\": \"Actionable interview tip\"\n" +
+                    "}\n" +
+                    "Return ONLY the JSON object.",
+                    topic, subTopic != null ? subTopic : topic, concept != null ? concept : topic,
+                    difficulty, experienceLevel, questionType,
+                    usedBuilder.toString(),
+                    topic, subTopic != null ? subTopic : topic, concept != null ? concept : topic,
+                    difficulty, experienceLevel, questionType
+            );
+
+            // Controlled retry loop (up to 3 attempts)
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    Map<String, Object> reqBody = Map.of(
+                            "contents", List.of(
+                                    Map.of("parts", List.of(Map.of("text", prompt)))
+                            ),
+                            "generationConfig", Map.of(
+                                    "temperature", 0.7 + (attempt * 0.1),
+                                    "maxOutputTokens", 2048,
+                                    "responseMimeType", "application/json"
+                            )
+                    );
+                    String bodyJson = objectMapper.writeValueAsString(reqBody);
+                    String raw = callGemini(apiKey, bodyJson, 15);
+                    if (raw == null) continue;
+
+                    String jsonText = extractJsonText(raw);
+                    if (jsonText == null) continue;
+
+                    Map<String, Object> qMap = objectMapper.readValue(jsonText, new TypeReference<Map<String, Object>>() {});
+                    if (qMap != null && qMap.containsKey("question") && qMap.containsKey("options")) {
+                        return qMap;
+                    }
+                } catch (Exception e) {
+                    log.warn("Gemini replacement attempt {} failed: {}", attempt, e.getMessage());
+                }
+            }
+            return Collections.emptyMap();
+        });
+    }
+
     private String callGemini(String apiKey, String body, int timeoutSeconds) {
         // Ordered candidates: primary fast model, latest flash-lite, then 3-flash preview
         List<String> candidateModels = new ArrayList<>();
