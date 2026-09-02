@@ -64,9 +64,11 @@ public class TestService {
                 ? config.getAnonymousSessionId()
                 : "anon_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
 
+        List<String> effectiveTopics = config.getEffectiveTopics();
+
         String title = config.getTitle();
         if (title == null || title.isBlank()) {
-            title = String.join(", ", config.getTopics()) + " Assessment";
+            title = "Java Backend (" + config.getExperienceLevel() + ", " + config.getDifficulty() + ") Assessment";
         }
 
         TestSession session = TestSession.builder()
@@ -74,7 +76,7 @@ public class TestService {
                 .anonymousSessionId(anonId)
                 .title(title)
                 .promptDescription(config.getPromptDescription())
-                .topics(config.getTopics())
+                .topics(effectiveTopics)
                 .subTopics(config.getSubTopics() != null ? config.getSubTopics() : new ArrayList<>())
                 .experienceLevel(config.getExperienceLevel())
                 .difficulty(config.getDifficulty())

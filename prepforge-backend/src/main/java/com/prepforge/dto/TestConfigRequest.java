@@ -2,7 +2,6 @@ package com.prepforge.dto;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -21,7 +20,6 @@ public class TestConfigRequest {
     private String title;
     private String promptDescription;
 
-    @NotEmpty(message = "At least one topic must be selected")
     private List<String> topics;
 
     private List<String> subTopics;
@@ -43,4 +41,23 @@ public class TestConfigRequest {
     @Max(value = 180, message = "Maximum time limit is 180 minutes")
     @Builder.Default
     private int timeLimitMinutes = 15;
+
+    public List<String> getEffectiveTopics() {
+        if (topics == null || topics.isEmpty()) {
+            return List.of(
+                "Core Java",
+                "Object-Oriented Programming (OOP) & Patterns",
+                "Java Collections Framework",
+                "Java 8+ & Modern Java",
+                "Streams API",
+                "Multithreading & Concurrency",
+                "JVM & Performance Tuning",
+                "Spring Boot",
+                "Spring Framework Core",
+                "Spring Security & JWT",
+                "RESTful API Design"
+            );
+        }
+        return topics;
+    }
 }
