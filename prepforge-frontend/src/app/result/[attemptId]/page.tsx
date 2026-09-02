@@ -6,7 +6,6 @@ import { prepforgeApi } from "@/lib/api-client";
 import { TestResult } from "@/types/test";
 import { ResultScoreCard } from "@/components/result/ResultScoreCard";
 import { PerformanceBreakdown } from "@/components/result/PerformanceBreakdown";
-import { WeakStrongAreas } from "@/components/result/WeakStrongAreas";
 import { QuestionReviewCard } from "@/components/result/QuestionReviewCard";
 import { LoadingExperience } from "@/components/builder/LoadingExperience";
 import { Button } from "@/components/ui/Button";
@@ -147,14 +146,7 @@ export default function ResultPage() {
           difficultyAccuracy={result.difficultyAccuracy}
         />
 
-        {/* 3. Weak & Strong Areas */}
-        <WeakStrongAreas
-          weakAreas={result.weakAreas || []}
-          strongAreas={result.strongAreas || []}
-          topicAccuracy={result.topicAccuracy}
-        />
-
-        {/* 4. Detailed Question Review List */}
+        {/* 3. Detailed Question Review List */}
         <div className="space-y-4 pt-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
