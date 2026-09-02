@@ -11,7 +11,8 @@ import {
   RotateCcw, 
   Bookmark, 
   BookmarkCheck,
-  Tag
+  Tag,
+  CheckCircle
 } from "lucide-react";
 
 interface QuestionCardProps {
@@ -25,6 +26,7 @@ interface QuestionCardProps {
   onToggleMarkReview: () => void;
   onPrevious: () => void;
   onNext: () => void;
+  onSubmit?: () => void;
   hasPrevious: boolean;
   hasNext: boolean;
 }
@@ -40,6 +42,7 @@ export function QuestionCard({
   onToggleMarkReview,
   onPrevious,
   onNext,
+  onSubmit,
   hasPrevious,
   hasNext,
 }: QuestionCardProps) {
@@ -166,16 +169,27 @@ export function QuestionCard({
             <span>Previous</span>
           </Button>
 
-          <Button
-            variant="primary"
-            size="md"
-            onClick={onNext}
-            disabled={!hasNext}
-            className="flex-1 sm:flex-none"
-          >
-            <span>Next Question</span>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+          {hasNext ? (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={onNext}
+              className="flex-1 sm:flex-none"
+            >
+              <span>Next Question</span>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={onSubmit}
+              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+            >
+              <span>Submit Test</span>
+              <CheckCircle className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
     </div>

@@ -224,6 +224,7 @@ export default function TakeTestPage() {
                 onToggleMarkReview={handleToggleMarkReview}
                 onPrevious={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
                 onNext={() => setCurrentIndex((prev) => Math.min(testDetail.questions.length - 1, prev + 1))}
+                onSubmit={() => setShowSubmitModal(true)}
                 hasPrevious={currentIndex > 0}
                 hasNext={currentIndex < testDetail.questions.length - 1}
               />
