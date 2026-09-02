@@ -13,37 +13,37 @@ const EXPERIENCE_OPTIONS: { level: ExperienceLevel; label: string; desc: string;
   {
     level: "Beginner",
     label: "Beginner / Fresher",
-    desc: "Foundational syntax, core OOP concepts, basic data types.",
+    desc: "Basic concepts and simple questions.",
     icon: Sparkles,
   },
   {
     level: "0-1 years",
     label: "0–1 Years",
-    desc: "Junior role readiness, fundamental collections, simple queries.",
+    desc: "Fundamental interview questions with practical basics.",
     icon: UserCheck,
   },
   {
     level: "1-2 years",
     label: "1–2 Years",
-    desc: "Intermediate concepts, Stream pipelines, exception handling.",
+    desc: "Intermediate concepts and practical scenarios.",
     icon: Briefcase,
   },
   {
     level: "2-3 years",
     label: "2–3 Years",
-    desc: "Multithreading, Spring Boot annotations, JPA relationships, caching.",
+    desc: "Deeper concepts and real-world interview scenarios.",
     icon: Award,
   },
   {
     level: "3-5 years",
     label: "3–5 Years",
-    desc: "Advanced concurrency, JVM tuning, system design edge cases, ACID.",
+    desc: "Advanced concepts and complex scenarios.",
     icon: ShieldCheck,
   },
   {
     level: "5+ years",
     label: "5+ Years (Senior / Lead)",
-    desc: "Architectural trade-offs, internal deep dives, distributed systems.",
+    desc: "Deep concepts, architecture, and advanced problem-solving.",
     icon: Award,
   },
 ];
@@ -56,7 +56,7 @@ export function ExperienceSelector({ value, onChange }: ExperienceSelectorProps)
           Experience Level <span className="text-rose-500">*</span>
         </label>
         <p className="text-xs text-slate-500 mt-0.5">
-          Shapes the depth of questions, code snippet complexity, and real-world scenario expectations.
+          Controls the depth, nuance, and complexity expected for your seniority.
         </p>
       </div>
 
