@@ -18,7 +18,6 @@ import { NaturalLanguagePrompt } from "./NaturalLanguagePrompt";
 import { TopicSelector } from "./TopicSelector";
 import { ExperienceSelector } from "./ExperienceSelector";
 import { DifficultySelector } from "./DifficultySelector";
-import { QuestionTypeSelector } from "./QuestionTypeSelector";
 import { TestParameters } from "./TestParameters";
 import { InterpretedConfigCard } from "./InterpretedConfigCard";
 import { LoadingExperience } from "./LoadingExperience";
