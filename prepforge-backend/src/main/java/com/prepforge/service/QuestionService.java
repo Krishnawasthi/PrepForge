@@ -30,9 +30,8 @@ public class QuestionService {
     }
 
     /**
-     * Prepares EXACTLY the requested number of questions.
-     * PRIMARY: Gemini AI (live LLM) generates unique, interview-critical questions.
-     * FALLBACK: Dynamic parametric engine if Gemini is unavailable.
+     * Prepares EXACTLY the requested number of questions with zero repetition,
+     * strict topic adherence, and realistic 4-option randomization.
      */
     public List<Question> prepareQuestionsForTest(
             List<String> topics,
@@ -44,51 +43,78 @@ public class QuestionService {
             String promptDescription) {
 
         int requestedCount = Math.max(1, Math.min(50, targetCount));
-        log.info("Preparing EXACTLY {} questions via Gemini AI | topics={} | difficulty={} | exp={}",
-                requestedCount, topics, difficulty, experienceLevel);
+        List<String> effectiveTopics = (topics != null && !topics.isEmpty())
+                ? topics
+                : List.of("Core Java", "Spring Boot", "Multithreading & Concurrency");
+
+        log.info("Preparing EXACTLY {} questions | topics={} | difficulty={} | exp={}",
+                requestedCount, effectiveTopics, difficulty, experienceLevel);
 
         List<Question> resultQuestions = new ArrayList<>();
         Set<String> seenTexts = new HashSet<>();
 
-        // ── STEP 1: Gemini AI (primary) ───────────────────────────────────────
+        // ── STEP 1: Gemini AI (Parallel, primary) ──────────────────────────────
         try {
             List<Map<String, Object>> aiMaps = aiService.generateQuestionsBatch(
-                    topics, subTopics, experienceLevel, difficulty,
+                    effectiveTopics, subTopics, experienceLevel, difficulty,
                     questionTypes, requestedCount, promptDescription
             ).get();
 
             if (aiMaps != null && !aiMaps.isEmpty()) {
                 for (Map<String, Object> qMap : aiMaps) {
                     if (resultQuestions.size() >= requestedCount) break;
-                    Question q = mapFromAiResponse(qMap);
-                    if (isValidQuestion(q) && seenTexts.add(q.getQuestion().trim().toLowerCase())) {
+                    Question q = mapFromAiResponse(qMap, effectiveTopics);
+                    if (isValidQuestion(q)) {
+                        String normalized = normalizeQuestionText(q.getQuestion());
+                        if (seenTexts.add(normalized)) {
+                            resultQuestions.add(q);
+                        }
+                    }
+                }
+                log.info("Gemini delivered {} unique valid questions (requested {})",
+                        resultQuestions.size(), requestedCount);
+            }
+        } catch (Exception e) {
+            log.warn("Gemini AI generation note (falling back to curated/dynamic bank): {}", e.getMessage());
+        }
+
+        // ── STEP 2: Curated Bank for Selected Topics ─────────────────────────
+        if (resultQuestions.size() < requestedCount) {
+            List<Question> curatedBank = new ArrayList<>(questionBankService.getCuratedQuestionBank());
+            Collections.shuffle(curatedBank);
+
+            // Filter for selected topics first
+            for (Question q : curatedBank) {
+                if (resultQuestions.size() >= requestedCount) break;
+                if (matchesAnyTopic(q.getTopic(), effectiveTopics)) {
+                    String normalized = normalizeQuestionText(q.getQuestion());
+                    if (seenTexts.add(normalized)) {
                         resultQuestions.add(q);
                     }
                 }
-                log.info("Gemini generated {} valid questions (requested {})", resultQuestions.size(), requestedCount);
             }
-        } catch (Exception e) {
-            log.warn("Gemini AI generation failed, using fallback: {}", e.getMessage());
         }
 
-        // ── STEP 2: Dynamic parametric fallback (if Gemini returned fewer) ────
+        // ── STEP 3: Diverse Parametric Engine for Remaining Slots ─────────────
         if (resultQuestions.size() < requestedCount) {
             int needed = requestedCount - resultQuestions.size();
-            log.info("Gemini short by {}. Using dynamic parametric fallback.", needed);
+            log.info("Filling remaining {} questions using diverse parametric engine for topics: {}",
+                    needed, effectiveTopics);
 
             List<Question> dynamic = questionBankService.generateDynamicJavaQuestions(
-                    topics, experienceLevel, difficulty, needed * 2 // Ask for extra to account for deduplication
+                    effectiveTopics, experienceLevel, difficulty, needed * 2
             );
 
             for (Question q : dynamic) {
                 if (resultQuestions.size() >= requestedCount) break;
-                if (seenTexts.add(q.getQuestion().trim().toLowerCase())) {
+                String normalized = normalizeQuestionText(q.getQuestion());
+                if (seenTexts.add(normalized)) {
                     resultQuestions.add(q);
                 }
             }
         }
 
-        // ── STEP 3: Final shuffle + option randomization ──────────────────────
+        // ── STEP 4: Final Shuffle & Option Letter Randomization ────────────────
         Collections.shuffle(resultQuestions);
 
         return resultQuestions.stream()
@@ -97,7 +123,6 @@ public class QuestionService {
                 .collect(Collectors.toList());
     }
 
-    // Overload for backwards compatibility (no promptDescription)
     public List<Question> prepareQuestionsForTest(
             List<String> topics,
             List<String> subTopics,
@@ -108,10 +133,29 @@ public class QuestionService {
         return prepareQuestionsForTest(topics, subTopics, experienceLevel, difficulty, questionTypes, targetCount, null);
     }
 
-    // ── Mapping helpers ───────────────────────────────────────────────────────
+    private boolean matchesAnyTopic(String questionTopic, List<String> requestedTopics) {
+        if (questionTopic == null || requestedTopics == null || requestedTopics.isEmpty()) return true;
+        String qLower = questionTopic.toLowerCase();
+        for (String req : requestedTopics) {
+            String rLower = req.toLowerCase();
+            if (qLower.contains(rLower) || rLower.contains(qLower)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeQuestionText(String text) {
+        if (text == null) return "";
+        // Strip markdown code fences, spaces, and punctuation for strict similarity comparison
+        return text.toLowerCase()
+                .replaceAll("```[a-z]*", "")
+                .replaceAll("[^a-z0-9]", "")
+                .trim();
+    }
 
     @SuppressWarnings("unchecked")
-    private Question mapFromAiResponse(Map<String, Object> map) {
+    private Question mapFromAiResponse(Map<String, Object> map, List<String> requestedTopics) {
         String id = "q_ai_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
         String question = String.valueOf(map.getOrDefault("question", "")).trim();
         List<String> options = (List<String>) map.getOrDefault("options", Collections.emptyList());
@@ -124,9 +168,13 @@ public class QuestionService {
             ((Map<?, ?>) rawOptExp).forEach((k, v) -> optionExplanations.put(String.valueOf(k), String.valueOf(v)));
         }
 
-        String topic = String.valueOf(map.getOrDefault("topic", "Core Java")).trim();
+        String topic = String.valueOf(map.getOrDefault("topic", "")).trim();
+        if (topic.isBlank() || !matchesAnyTopic(topic, requestedTopics)) {
+            topic = (requestedTopics != null && !requestedTopics.isEmpty()) ? requestedTopics.get(0) : "Core Java";
+        }
+
         String subTopic = String.valueOf(map.getOrDefault("subTopic", "")).trim();
-        String diff = String.valueOf(map.getOrDefault("difficulty", difficulty(map))).trim();
+        String diff = String.valueOf(map.getOrDefault("difficulty", "Medium")).trim();
         String exp = String.valueOf(map.getOrDefault("experienceLevel", "1-2 years")).trim();
         String qType = String.valueOf(map.getOrDefault("questionType", "Conceptual MCQ")).trim();
         String tip = String.valueOf(map.getOrDefault("interviewTip", "Review core Java concepts.")).trim();
@@ -147,13 +195,6 @@ public class QuestionService {
                 .build();
     }
 
-    private String difficulty(Map<String, Object> map) {
-        return "Medium";
-    }
-
-    /**
-     * Randomizes option order while keeping correctAnswer pointer intact.
-     */
     public Question randomizeQuestionOptions(Question original) {
         if (original.getOptions() == null || original.getOptions().size() < 2) {
             return original;
@@ -185,8 +226,6 @@ public class QuestionService {
         if (question.getOptions() == null || question.getOptions().size() != 4) return false;
         if (question.getCorrectAnswer() == null || question.getCorrectAnswer().isBlank()) return false;
         if (!question.getOptions().contains(question.getCorrectAnswer())) return false;
-        if (question.getExplanation() == null || question.getExplanation().isBlank()) return false;
-        if (question.getTopic() == null || question.getTopic().isBlank()) return false;
         return true;
     }
 

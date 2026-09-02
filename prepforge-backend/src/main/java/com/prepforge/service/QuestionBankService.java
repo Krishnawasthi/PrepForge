@@ -9,12 +9,14 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 @Service
 public class QuestionBankService {
 
     private static final Logger log = LoggerFactory.getLogger(QuestionBankService.class);
     private final QuestionRepository questionRepository;
+    private List<Question> curatedBankCache = new ArrayList<>();
 
     public QuestionBankService(QuestionRepository questionRepository) {
         this.questionRepository = questionRepository;
@@ -24,187 +26,362 @@ public class QuestionBankService {
     public void seedInitialQuestions() {
         try {
             log.info("Refreshing comprehensive Java Backend question bank in database...");
+            curatedBankCache = getCuratedQuestionBank();
             questionRepository.deleteAll();
-            List<Question> questions = getCuratedQuestionBank();
-            questionRepository.saveAll(questions);
-            log.info("Successfully seeded {} curated Java Backend questions.", questions.size());
+            questionRepository.saveAll(curatedBankCache);
+            log.info("Successfully seeded {} curated Java Backend questions.", curatedBankCache.size());
         } catch (Exception e) {
             log.warn("Question bank database seeding skipped (will use in-memory bank): {}", e.getMessage());
+            curatedBankCache = getCuratedQuestionBank();
         }
     }
 
     /**
-     * Generates dynamic, non-repetitive parametric questions on the fly for any topic and target count.
+     * Generates dynamic, strictly non-repetitive questions for the specified topics.
      */
     public List<Question> generateDynamicJavaQuestions(List<String> topics, String experienceLevel, String difficulty, int targetCount) {
         List<Question> dynamicList = new ArrayList<>();
         Random random = ThreadLocalRandom.current();
+        Set<String> generatedQuestions = new HashSet<>();
 
-        for (int i = 0; i < targetCount; i++) {
-            String topic = (topics != null && !topics.isEmpty())
-                    ? topics.get(i % topics.size())
-                    : "Core Java";
+        List<String> effectiveTopics = (topics != null && !topics.isEmpty())
+                ? topics
+                : List.of("Core Java", "Spring Boot", "Multithreading & Concurrency");
 
-            dynamicList.add(createParametricQuestion(topic, experienceLevel, difficulty, i, random));
+        int attempts = 0;
+        int maxAttempts = targetCount * 10;
+
+        while (dynamicList.size() < targetCount && attempts < maxAttempts) {
+            attempts++;
+            String topic = effectiveTopics.get(dynamicList.size() % effectiveTopics.size());
+            int variationIndex = (attempts / effectiveTopics.size()) % 15;
+
+            Question q = createDiverseParametricQuestion(topic, experienceLevel, difficulty, variationIndex, random);
+            if (q != null && generatedQuestions.add(q.getQuestion().trim().toLowerCase())) {
+                dynamicList.add(q);
+            }
         }
 
         return dynamicList;
     }
 
-    private Question createParametricQuestion(String topic, String exp, String diff, int index, Random random) {
-        int a = random.nextInt(2, 10);
-        int b = random.nextInt(10, 50);
-        String uid = "dyn_" + topic.toLowerCase().replaceAll("[^a-z0-9]", "_") + "_" + System.currentTimeMillis() + "_" + index;
+    private Question createDiverseParametricQuestion(String topic, String exp, String diff, int variant, Random random) {
+        String uid = "dyn_" + topic.toLowerCase().replaceAll("[^a-z0-9]", "_") + "_" + System.currentTimeMillis() + "_" + random.nextInt(10000);
 
         if (topic.contains("Collections") || topic.contains("Collection")) {
-            return createQuestion(
-                    uid,
-                    "In a high-throughput Java backend application, which collection provides thread-safe access with segment/bucket level locking rather than global table synchronization?",
-                    List.of(
+            switch (variant % 5) {
+                case 0:
+                    return createQuestion(uid,
+                            "In a high-throughput Java backend application, which collection provides thread-safe access with bucket-level CAS/synchronized locking rather than global table synchronization?",
+                            List.of("ConcurrentHashMap", "Collections.synchronizedMap(new HashMap<>())", "Hashtable", "TreeMap"),
                             "ConcurrentHashMap",
-                            "Collections.synchronizedMap(new HashMap<>())",
-                            "Hashtable",
-                            "TreeMap"
-                    ),
-                    "ConcurrentHashMap",
-                    "ConcurrentHashMap uses lock striping / synchronized tree bins on individual buckets (CAS + synchronized per bucket) to allow concurrent reads and writes without locking the entire map, unlike Hashtable or synchronizedMap which use a single mutual exclusion monitor lock.",
-                    Map.of(
-                            "A", "Correct. ConcurrentHashMap allows concurrent reads without locking and locks only specific buckets/bins during writes.",
-                            "B", "Incorrect. Collections.synchronizedMap synchronizes every read/write operation on the same single mutex lock.",
-                            "C", "Incorrect. Hashtable synchronizes every method at the method level, creating a severe concurrency bottleneck.",
-                            "D", "Incorrect. TreeMap is neither thread-safe nor hash-based."
-                    ),
-                    "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
-                    "Always mention how ConcurrentHashMap in Java 8+ replaced Segment locks with CAS and synchronized nodes on individual bucket heads."
-            );
+                            "ConcurrentHashMap uses lock striping / synchronized tree bins on individual buckets (CAS + synchronized per bucket) to allow concurrent reads and writes without locking the entire map.",
+                            Map.of("A", "Correct. ConcurrentHashMap locks only specific bucket bins during writes.",
+                                    "B", "Incorrect. synchronizedMap locks the entire map instance on every read/write.",
+                                    "C", "Incorrect. Hashtable synchronizes at the method level globally.",
+                                    "D", "Incorrect. TreeMap is not thread-safe."),
+                            "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
+                            "Always mention how ConcurrentHashMap in Java 8+ replaced Segment locks with CAS and synchronized bucket heads.");
+                case 1:
+                    return createQuestion(uid,
+                            "What is the time complexity of `ArrayList.remove(0)` versus `LinkedList.removeFirst()` in Java?",
+                            List.of("O(N) for ArrayList vs O(1) for LinkedList", "O(1) for ArrayList vs O(N) for LinkedList", "O(1) for both", "O(N) for both"),
+                            "O(N) for ArrayList vs O(1) for LinkedList",
+                            "ArrayList must shift all N-1 subsequent elements to the left via System.arraycopy (O(N)). LinkedList simply updates its head node pointer (O(1)).",
+                            Map.of("A", "Correct. ArrayList requires shifting remaining elements; LinkedList only unlinks pointers.",
+                                    "B", "Incorrect. ArrayList cannot shift elements in O(1).",
+                                    "C", "Incorrect. ArrayList is not O(1) for index 0 deletion.",
+                                    "D", "Incorrect. LinkedList deletion of head is O(1)."),
+                            "Java Collections Framework", "list-set-implementations", diff, exp, "Conceptual MCQ",
+                            "Remember that ArrayList has better CPU cache locality despite O(N) shifts for small collections.");
+                case 2:
+                    return createQuestion(uid,
+                            "Which Java Collection guarantees that elements are maintained in their exact insertion order without sorting by natural comparison?",
+                            List.of("LinkedHashMap", "TreeMap", "HashMap", "ConcurrentSkipListMap"),
+                            "LinkedHashMap",
+                            "LinkedHashMap maintains a doubly-linked list running through all of its entries, preserving insertion order (or access order for LRU caches).",
+                            Map.of("A", "Correct. LinkedHashMap preserves insertion or LRU access order.",
+                                    "B", "Incorrect. TreeMap sorts keys by natural order or Comparator.",
+                                    "C", "Incorrect. HashMap makes no guarantees regarding iteration order.",
+                                    "D", "Incorrect. ConcurrentSkipListMap maintains natural sorted order."),
+                            "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
+                            "LinkedHashMap is commonly used to implement LRU caches by overriding removeEldestEntry().");
+                case 3:
+                    return createQuestion(uid,
+                            "Under what condition does `CopyOnWriteArrayList` deliver superior performance compared to `Collections.synchronizedList()`?",
+                            List.of("When read operations vastly outnumber write operations", "When write/insert operations vastly outnumber read operations", "When the list size exceeds 10 million items", "When frequent sort operations are executed"),
+                            "When read operations vastly outnumber write operations",
+                            "CopyOnWriteArrayList allows read operations to proceed without locks on a snapshot array. Writes create a fresh copy of the array, making writes expensive but reads lock-free.",
+                            Map.of("A", "Correct. Read-heavy scenarios (e.g. event listeners) benefit from lock-free reads.",
+                                    "B", "Incorrect. Write-heavy workloads cause massive GC and memory copying overhead.",
+                                    "C", "Incorrect. Copying 10M items on write would cause severe GC pauses.",
+                                    "D", "Incorrect. Sorting triggers multiple mutations."),
+                            "Java Collections Framework", "list-set-implementations", diff, exp, "Scenario-based",
+                            "Use CopyOnWriteArrayList for subscriber/listener registries where subscriptions change rarely.");
+                default:
+                    return createQuestion(uid,
+                            "What happens when two distinct objects produce the exact same `hashCode()` in Java's `HashMap`?",
+                            List.of("They are placed in the same bucket and checked via equals()", "The second object overwrites the first immediately", "A HashCollisionException is thrown", "The HashMap automatically doubles its table capacity"),
+                            "They are placed in the same bucket and checked via equals()",
+                            "Hash collisions are resolved by chaining elements in the same bucket. When searching, HashMap traverses the bucket and calls equals() to locate the matching key.",
+                            Map.of("A", "Correct. Collisions reside in the same bucket chained as a list or tree.",
+                                    "B", "Incorrect. Overwriting only occurs if equals() also returns true.",
+                                    "C", "Incorrect. Collisions are standard and expected; no exception is thrown.",
+                                    "D", "Incorrect. Resizing is governed by total count and load factor, not single collisions."),
+                            "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
+                            "Remind the interviewer that poorly distributed hashCode() degrades lookup from O(1) to O(log N) or O(N).");
+            }
         } else if (topic.contains("Multithreading") || topic.contains("Concurrency")) {
-            int poolSize = a * 2;
-            return createQuestion(
-                    uid,
-                    "Consider a `ThreadPoolExecutor` configured with corePoolSize=" + a + ", maxPoolSize=" + poolSize + ", and an unbounded `LinkedBlockingQueue`. When " + (poolSize + 5) + " tasks are submitted concurrently, how many active worker threads are created?",
-                    List.of(
-                            String.valueOf(a) + " threads (only corePoolSize is created because the work queue is unbounded)",
-                            String.valueOf(poolSize) + " threads (maxPoolSize is reached)",
-                            String.valueOf(poolSize + 5) + " threads",
-                            "An IllegalArgumentException is thrown"
-                    ),
-                    String.valueOf(a) + " threads (only corePoolSize is created because the work queue is unbounded)",
-                    "ThreadPoolExecutor only scales threads beyond corePoolSize when the work queue is full. With an unbounded LinkedBlockingQueue, the queue never fills up, so threads beyond corePoolSize (" + a + ") will never be created.",
-                    Map.of(
-                            "A", "Correct. Threads beyond corePoolSize are only spawned if the queue rejects task insertion due to reaching capacity.",
-                            "B", "Incorrect. maxPoolSize is ignored when using an unbounded work queue.",
-                            "C", "Incorrect. The executor never creates more than maxPoolSize threads under any circumstance.",
-                            "D", "Incorrect. An unbounded queue is valid syntax and will not throw exceptions."
-                    ),
-                    "Multithreading & Concurrency", "executors-futures", diff, exp, "Scenario-based",
-                    "This is a classic senior Java concurrency question. Remind interviewers that using unbounded queues with maxPoolSize can lead to unexpected OOM without increasing thread counts."
-            );
+            switch (variant % 5) {
+                case 0:
+                    int core = random.nextInt(2, 6);
+                    int max = core * 2;
+                    return createQuestion(uid,
+                            "Consider a `ThreadPoolExecutor` configured with corePoolSize=" + core + ", maxPoolSize=" + max + ", and an unbounded `LinkedBlockingQueue`. When " + (max + 10) + " tasks are submitted concurrently, how many active worker threads are created?",
+                            List.of(core + " threads (only corePoolSize is created because the work queue is unbounded)",
+                                    max + " threads (maxPoolSize is reached)",
+                                    (max + 10) + " threads",
+                                    "An RejectedExecutionException is thrown"),
+                            core + " threads (only corePoolSize is created because the work queue is unbounded)",
+                            "ThreadPoolExecutor only scales threads beyond corePoolSize when the work queue is completely full. Because LinkedBlockingQueue is unbounded by default, tasks queue indefinitely and maxPoolSize is never utilized.",
+                            Map.of("A", "Correct. Threads beyond corePoolSize are only spawned if the queue rejects task insertion.",
+                                    "B", "Incorrect. maxPoolSize is never reached with an unbounded queue.",
+                                    "C", "Incorrect. The executor never spawns more than maxPoolSize threads.",
+                                    "D", "Incorrect. Unbounded queues do not reject tasks unless memory is exhausted."),
+                            "Multithreading & Concurrency", "executors-futures", diff, exp, "Scenario-based",
+                            "Classic senior trap: Always bound your queues in production to avoid OutOfMemoryError.");
+                case 1:
+                    return createQuestion(uid,
+                            "What is the difference between `volatile` and `AtomicInteger` in Java concurrency?",
+                            List.of("volatile guarantees memory visibility only; AtomicInteger guarantees visibility AND atomic read-modify-write operations (CAS)",
+                                    "volatile is synchronized while AtomicInteger is lock-free",
+                                    "volatile is atomic for compound operations like count++ while AtomicInteger is not",
+                                    "They are completely identical in function and byte-code"),
+                            "volatile guarantees memory visibility only; AtomicInteger guarantees visibility AND atomic read-modify-write operations (CAS)",
+                            "volatile only guarantees that reads and writes are visible across CPU caches and prevents instruction reordering. Compound operations like count++ (read, increment, write) are NOT atomic on volatile variables. AtomicInteger uses hardware CAS (Compare-And-Swap) for atomicity.",
+                            Map.of("A", "Correct. volatile provides visibility; AtomicInteger provides visibility + atomicity via CAS.",
+                                    "B", "Incorrect. volatile does not use monitor synchronization.",
+                                    "C", "Incorrect. count++ is not atomic with volatile.",
+                                    "D", "Incorrect. They have fundamentally different atomicity guarantees."),
+                            "Multithreading & Concurrency", "locks-volatiles", diff, exp, "Conceptual MCQ",
+                            "Emphasize that count++ on a volatile int produces race conditions under concurrent writes.");
+                case 2:
+                    return createQuestion(uid,
+                            "What problem does `ReentrantLock.tryLock(timeout, unit)` solve that intrinsic `synchronized` blocks cannot?",
+                            List.of("Deadlock avoidance via timed non-blocking lock acquisition attempts",
+                                    "Automatic garbage collection of thread monitors",
+                                    "Guaranteeing zero memory cache invalidations",
+                                    "Enforcing thread priority scheduling"),
+                            "Deadlock avoidance via timed non-blocking lock acquisition attempts",
+                            "Intrinsic synchronized blocks block indefinitely if a monitor is held, risking unrecoverable deadlocks. ReentrantLock allows tryLock() with timeouts, letting a thread back off and release held locks if it cannot acquire the next lock.",
+                            Map.of("A", "Correct. Timed tryLock() allows breaking deadlock cycles through cooperative backoff.",
+                                    "B", "Incorrect. JVM garbage collection does not depend on tryLock.",
+                                    "C", "Incorrect. Locks always coordinate CPU memory barriers.",
+                                    "D", "Incorrect. Java locks do not override OS thread priority."),
+                            "Multithreading & Concurrency", "locks-volatiles", diff, exp, "Best-practice",
+                            "Explain how tryLock() enables the lock-ordering back-off pattern to prevent deadlocks in distributed systems.");
+                case 3:
+                    return createQuestion(uid,
+                            "In `CompletableFuture`, what is the key difference between `thenApply()` and `thenCompose()`?",
+                            List.of("thenApply maps a value T to U; thenCompose flattens a nested CompletableFuture (similar to flatMap)",
+                                    "thenApply runs asynchronously on a new thread while thenCompose is synchronous",
+                                    "thenCompose catches exceptions while thenApply cannot",
+                                    "thenApply is deprecated in favor of thenCompose"),
+                            "thenApply maps a value T to U; thenCompose flattens a nested CompletableFuture (similar to flatMap)",
+                            "thenApply(fn) takes a function T -> U and returns CompletableFuture<U>. thenCompose(fn) takes a function T -> CompletableFuture<U> and flattens it, preventing nested CompletableFuture<CompletableFuture<U>>.",
+                            Map.of("A", "Correct. thenApply is equivalent to map(), whereas thenCompose is equivalent to flatMap().",
+                                    "B", "Incorrect. Asynchronous execution is controlled by the Async variants (thenApplyAsync).",
+                                    "C", "Incorrect. Exception handling is handled by exceptionally() or handle().",
+                                    "D", "Incorrect. Neither method is deprecated."),
+                            "Multithreading & Concurrency", "executors-futures", diff, exp, "Conceptual MCQ",
+                            "Compare thenCompose to Mono.flatMap() in Spring WebFlux or Optional.flatMap().");
+                default:
+                    return createQuestion(uid,
+                            "Why is it essential to call `ThreadLocal.remove()` in applications using pooled worker threads (such as Tomcat or ExecutorService)?",
+                            List.of("To prevent memory leaks and state pollution across different HTTP requests reusing the same thread",
+                                    "To prevent ClassNotFoundException on application stop",
+                                    "To notify the Garbage Collector to shut down the thread pool",
+                                    "Because ThreadLocal throws an IllegalStateException if accessed twice"),
+                            "To prevent memory leaks and state pollution across different HTTP requests reusing the same thread",
+                            "Web servers reuse worker threads. If a ThreadLocal value is not removed after request processing, the thread retains strong references to objects in its ThreadLocalMap, causing both memory leaks and security/data leak issues when the thread serves the next user.",
+                            Map.of("A", "Correct. Failing to remove ThreadLocal values causes memory leaks and cross-request state pollution.",
+                                    "B", "Incorrect. Classloader leaks can occur, but ClassNotFoundException is not the direct result.",
+                                    "C", "Incorrect. ThreadLocal has no control over thread pool shutdown.",
+                                    "D", "Incorrect. ThreadLocal can be read multiple times safely."),
+                            "Multithreading & Concurrency", "thread-lifecycle", diff, exp, "Best-practice",
+                            "Always place threadLocal.remove() inside a finally block at the end of filter/interceptor chains.");
+            }
         } else if (topic.contains("Spring Boot") || topic.contains("Spring")) {
-            return createQuestion(
-                    uid,
-                    "What is the default scope of a Spring Bean defined via `@Component` or `@Service` in Spring Boot, and is it thread-safe by default?",
-                    List.of(
-                            "Singleton scope; it is NOT inherently thread-safe if it maintains mutable state.",
-                            "Prototype scope; a new instance is created on each injection.",
-                            "Request scope; tied to the HTTP request lifecycle.",
-                            "Singleton scope; Spring automatically synchronizes all method calls."
-                    ),
-                    "Singleton scope; it is NOT inherently thread-safe if it maintains mutable state.",
-                    "Spring beans are Singletons by default (one instance per ApplicationContext). Because multiple HTTP requests execute concurrently on different worker threads accessing the same singleton bean instance, maintaining mutable instance fields causes race conditions.",
-                    Map.of(
-                            "A", "Correct. Spring Singletons are shared across all threads in the JVM. Statelessness or proper thread-safety mechanisms must be used.",
-                            "B", "Incorrect. Prototype scope must be explicitly declared with @Scope('prototype').",
-                            "C", "Incorrect. Request scope is only for web-aware contexts with @RequestScope.",
-                            "D", "Incorrect. Spring does NOT automatically synchronize bean method executions."
-                    ),
-                    "Spring Boot", "auto-configuration", diff, exp, "Conceptual MCQ",
-                    "State that enterprise Spring services should always remain stateless to prevent concurrency bugs under concurrent user load."
-            );
-        } else if (topic.contains("JPA") || topic.contains("Hibernate")) {
-            return createQuestion(
-                    uid,
-                    "How do you resolve the `N+1 Query Problem` when fetching a `@OneToMany` collection of child entities in Spring Data JPA?",
-                    List.of(
-                            "Use `@Query(\"SELECT p FROM Parent p JOIN FETCH p.children\")` or `@EntityGraph(attributePaths = {\"children\"})`",
-                            "Change FetchType to `EAGER` on the @OneToMany annotation",
-                            "Set `spring.jpa.show-sql=false` in application.properties",
-                            "Use `findAllById()` inside a for-each loop"
-                    ),
-                    "Use `@Query(\"SELECT p FROM Parent p JOIN FETCH p.children\")` or `@EntityGraph(attributePaths = {\"children\"})`",
-                    "Setting FetchType.EAGER does NOT solve N+1 queries in JPQL/Criteria queries (it actually triggers N immediate secondary select queries). JOIN FETCH or @EntityGraph forces Hibernate to perform an SQL LEFT OUTER JOIN in a single query.",
-                    Map.of(
-                            "A", "Correct. JOIN FETCH or @EntityGraph forces a single SQL JOIN query, loading parents and children together.",
-                            "B", "Incorrect. FetchType.EAGER often exacerbates the N+1 problem by firing N extra SELECT queries eagerly.",
-                            "C", "Incorrect. Hiding SQL logs does not fix the underlying performance issue.",
-                            "D", "Incorrect. Looping queries in Java code causes the exact N+1 query antipattern."
-                    ),
-                    "Hibernate ORM & Performance", "n-plus-one", diff, exp, "Best-practice",
-                    "Emphasize that FetchType.LAZY + JOIN FETCH / EntityGraph is the recommended production standard for all @OneToMany relationships."
-            );
-        } else if (topic.contains("SQL") || topic.contains("DBMS")) {
-            return createQuestion(
-                    uid,
-                    "In SQL, which index structure is most optimal for range queries (e.g. `WHERE created_at BETWEEN ? AND ?`) and sorting operations?",
-                    List.of(
-                            "B-Tree (Balanced Tree) Index",
-                            "Hash Index",
-                            "Bitmap Index",
-                            "Spatial Index"
-                    ),
-                    "B-Tree (Balanced Tree) Index",
-                    "B-Tree indexes store keys in sorted sequential order with pointers to data rows, making range scans (BETWEEN, <, >) and ORDER BY operations logarithmic in lookup and linear in traversal. Hash indexes only support exact equality (=).",
-                    Map.of(
-                            "A", "Correct. B-Tree structures maintain sorted ordering which is optimal for range filtering and ordering.",
-                            "B", "Incorrect. Hash indexes only support O(1) exact match lookups and cannot perform range scans.",
-                            "C", "Incorrect. Bitmap indexes are used in OLAP systems with low-cardinality columns.",
-                            "D", "Incorrect. Spatial indexes are used for geospatial coordinate data (R-Tree)."
-                    ),
-                    "SQL & Query Optimization", "query-optimization", diff, exp, "Conceptual MCQ",
-                    "Explain that B+ Trees keep all data pointers in leaf nodes connected via a doubly linked list, enabling rapid range scans."
-            );
-        } else if (topic.contains("Kafka") || topic.contains("Redis")) {
-            return createQuestion(
-                    uid,
-                    "When designing a distributed caching layer with Redis in a Java Spring Boot application, what strategy best mitigates the `Cache Stampede` (Thundering Herd) problem?",
-                    List.of(
-                            "Using distributed mutex locks (e.g., Redisson) or pre-computing cache keys with randomized TTL jitter",
-                            "Disabling TTL so cache keys never expire",
-                            "Increasing the maximum heap size of the Spring Boot application",
-                            "Switching to in-memory ConcurrentHashMap on each instance"
-                    ),
-                    "Using distributed mutex locks (e.g., Redisson) or pre-computing cache keys with randomized TTL jitter",
-                    "Cache stampede occurs when a high-traffic cache key expires simultaneously, causing hundreds of concurrent threads to hit the backend database at once. Mutex locking ensures only one thread regenerates the cache while others wait, and TTL jitter prevents synchronized expiration.",
-                    Map.of(
-                            "A", "Correct. Distributed mutexes and randomized TTL jitter prevent thousands of threads from overwhelming the DB simultaneously.",
-                            "B", "Incorrect. Never expiring cache keys leads to stale data and memory exhaustion.",
-                            "C", "Incorrect. Java heap size has no effect on external Redis cache expiration spikes.",
-                            "D", "Incorrect. Local maps lack cross-instance distributed consistency."
-                    ),
-                    "Redis & Backend Caching", "cache-patterns", diff, exp, "Scenario-based",
-                    "Mentioning TTL jitter (+/- 5% random offset) demonstrates real-world production experience with distributed high-load caching."
-            );
+            switch (variant % 5) {
+                case 0:
+                    return createQuestion(uid,
+                            "How does Spring Boot determine which `@Configuration` classes to load during auto-configuration?",
+                            List.of("By reading META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports and evaluating @Conditional annotations",
+                                    "By scanning the entire disk for classes ending in 'Config'",
+                                    "By checking the pom.xml at runtime via Maven plugins",
+                                    "By inspecting the active OS environment variables for configuration flags"),
+                            "By reading META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports and evaluating @Conditional annotations",
+                            "Spring Boot 3 uses META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports (or spring.factories in Boot 2.x). Classes listed there are evaluated against conditional annotations (@ConditionalOnClass, @ConditionalOnMissingBean).",
+                            Map.of("A", "Correct. AutoConfiguration.imports lists candidate configs, filtered by @Conditional annotations.",
+                                    "B", "Incorrect. Spring Boot does not do arbitrary disk scans.",
+                                    "C", "Incorrect. pom.xml is not parsed by the running JVM at runtime.",
+                                    "D", "Incorrect. Auto-configuration relies on classpath detection and bean presence."),
+                            "Spring Boot", "auto-configuration", diff, exp, "Conceptual MCQ",
+                            "Mention how @ConditionalOnMissingBean allows developers to override default Spring Boot beans cleanly.");
+                case 1:
+                    return createQuestion(uid,
+                            "What is the default bean scope in the Spring ApplicationContext, and how does it behave in a multi-threaded web application?",
+                            List.of("Singleton scope; a single shared instance is used across all concurrent request threads",
+                                    "Prototype scope; a new instance is created for every HTTP request",
+                                    "Request scope; each thread gets an isolated bean copy automatically",
+                                    "Session scope; beans are tied to the HTTP session"),
+                            "Singleton scope; a single shared instance is used across all concurrent request threads",
+                            "Spring beans are Singletons by default. Since multiple threads concurrently execute methods on the same singleton instance, any mutable instance state is vulnerable to race conditions.",
+                            Map.of("A", "Correct. Singleton beans are shared across all threads; they should remain strictly stateless.",
+                                    "B", "Incorrect. Prototype scope must be explicitly declared with @Scope(\"prototype\").",
+                                    "C", "Incorrect. Request scope requires @RequestScope.",
+                                    "D", "Incorrect. Session scope requires @SessionScope."),
+                            "Spring Framework Core", "ioc-di", diff, exp, "Conceptual MCQ",
+                            "Emphasize that enterprise Spring services should always be stateless to ensure thread safety.");
+                case 2:
+                    return createQuestion(uid,
+                            "In Spring AOP, when does calling a method annotated with `@Transactional` FAIL to trigger a transaction?",
+                            List.of("When the method is invoked internally by another method in the same class (self-invocation)",
+                                    "When the method returns void",
+                                    "When the method is called from an asynchronous thread",
+                                    "When the class implements an interface"),
+                            "When the method is invoked internally by another method in the same class (self-invocation)",
+                            "Spring AOP creates dynamic proxies around beans. Calling this.annotatedMethod() bypasses the proxy interceptor and invokes the target instance method directly, bypassing transactional interceptors.",
+                            Map.of("A", "Correct. Self-invocation bypasses the Spring AOP proxy wrapper.",
+                                    "B", "Incorrect. Methods returning void can be fully transactional.",
+                                    "C", "Incorrect. Calling a separate bean method from an async thread still goes through its proxy.",
+                                    "D", "Incorrect. Implementing interfaces allows standard JDK dynamic proxies."),
+                            "Spring Framework Core", "spring-aop", diff, exp, "Scenario-based",
+                            "To fix self-invocation: extract the method into a separate service bean or inject the self-bean lazily.");
+                case 3:
+                    return createQuestion(uid,
+                            "Which Spring Boot Actuator endpoint provides detailed production metrics like JVM memory, garbage collection pauses, and HTTP request throughput?",
+                            List.of("/actuator/metrics", "/actuator/health", "/actuator/info", "/actuator/beans"),
+                            "/actuator/metrics",
+                            "/actuator/metrics exposes Micrometer metrics including jvm.memory.used, jvm.gc.pause, and http.server.requests. /actuator/health only indicates component UP/DOWN status.",
+                            Map.of("A", "Correct. /actuator/metrics provides detailed performance counters and gauges.",
+                                    "B", "Incorrect. /actuator/health provides health check status indicator.",
+                                    "C", "Incorrect. /actuator/info exposes arbitrary application build details.",
+                                    "D", "Incorrect. /actuator/beans lists all configured ApplicationContext beans."),
+                            "Spring Boot", "actuator-metrics", diff, exp, "Conceptual MCQ",
+                            "Mention Prometheus integration: /actuator/prometheus formats these metrics for scraping.");
+                default:
+                    return createQuestion(uid,
+                            "What is the difference between `@RestController` and `@Controller` in Spring Boot?",
+                            List.of("@RestController is a convenience annotation combining @Controller and @ResponseBody",
+                                    "@RestController supports XML while @Controller only supports JSON",
+                                    "@RestController is for asynchronous methods only",
+                                    "@RestController disables Spring Security filters automatically"),
+                            "@RestController is a convenience annotation combining @Controller and @ResponseBody",
+                            "@RestController annotates classes where every method returns domain objects directly written into the HTTP response body as JSON/XML via HttpMessageConverter, rather than rendering an HTML view template.",
+                            Map.of("A", "Correct. @RestController = @Controller + @ResponseBody on every handler method.",
+                                    "B", "Incorrect. Both can support XML or JSON based on HttpMessageConverters.",
+                                    "C", "Incorrect. Asynchronous execution requires @Async or reactive types.",
+                                    "D", "Incorrect. Security applies identically to both."),
+                            "RESTful API Design", "http-semantics", diff, exp, "Conceptual MCQ",
+                            "Explain how Jackson's MappingJackson2HttpMessageConverter serializes Java DTOs into JSON.");
+            }
+        } else if (topic.contains("Java 8") || topic.contains("Streams")) {
+            switch (variant % 3) {
+                case 0:
+                    return createQuestion(uid,
+                            "In the Java Streams API, what is the fundamental difference between intermediate and terminal operations?",
+                            List.of("Intermediate operations are lazy and return a new Stream; terminal operations trigger execution and close the stream",
+                                    "Intermediate operations execute immediately; terminal operations execute on a separate thread",
+                                    "Intermediate operations modify the underlying collection in-place",
+                                    "Terminal operations can be chained together indefinitely"),
+                            "Intermediate operations are lazy and return a new Stream; terminal operations trigger execution and close the stream",
+                            "Intermediate operations (filter, map, sorted) are evaluated lazily only when a terminal operation (collect, count, forEach) is called. Once a terminal operation finishes, the stream pipeline is consumed and cannot be reused.",
+                            Map.of("A", "Correct. Intermediate operations are lazy transformations; terminal operations produce a result or side effect.",
+                                    "B", "Incorrect. Intermediate operations are strictly lazy and do not execute eagerly.",
+                                    "C", "Incorrect. Streams never mutate their source data structures.",
+                                    "D", "Incorrect. A stream pipeline can only have exactly one terminal operation."),
+                            "Streams API", "stream-operations", diff, exp, "Conceptual MCQ",
+                            "Demonstrate that attempting to consume a stream twice results in IllegalStateException: stream has already been operated upon or closed.");
+                case 1:
+                    return createQuestion(uid,
+                            "When should `parallelStream()` be avoided in high-throughput enterprise backend services?",
+                            List.of("When tasks perform blocking I/O (database, HTTP calls) or when request threads are already pooled",
+                                    "When processing more than 100 elements in memory",
+                                    "When the CPU has more than 4 cores",
+                                    "When filtering immutable strings"),
+                            "When tasks perform blocking I/O (database, HTTP calls) or when request threads are already pooled",
+                            "parallelStream() shares the common ForkJoinPool.commonPool() across the entire JVM. Blocking I/O inside parallel streams starves worker threads, crippling all parallel streams across the application.",
+                            Map.of("A", "Correct. Blocking I/O saturates the common ForkJoinPool, impacting the entire JVM.",
+                                    "B", "Incorrect. In-memory CPU-bound computations on large collections are the primary use-case.",
+                                    "C", "Incorrect. Multiple cores are beneficial for parallel computation.",
+                                    "D", "Incorrect. String filtering is purely CPU-bound."),
+                            "Streams API", "parallel-streams", diff, exp, "Best-practice",
+                            "Never use parallelStream() for database calls or REST API requests in Spring Boot.");
+                default:
+                    return createQuestion(uid,
+                            "What is the difference between `Optional.orElse()` and `Optional.orElseGet()` in Java 8+?",
+                            List.of("orElse() evaluates its default argument eagerly even when value is present; orElseGet() takes a Supplier evaluated lazily",
+                                    "orElse() is thread-safe while orElseGet() is not",
+                                    "orElse() returns null if the value is missing",
+                                    "They behave identically with zero performance differences"),
+                            "orElse() evaluates its default argument eagerly even when value is present; orElseGet() takes a Supplier evaluated lazily",
+                            "orElse(expensiveCall()) executes expensiveCall() every time regardless of whether the Optional has a value. orElseGet(() -> expensiveCall()) only invokes the lambda if the Optional is empty.",
+                            Map.of("A", "Correct. orElse is eager; orElseGet is lazy via Supplier.",
+                                    "B", "Incorrect. Thread safety is unaffected.",
+                                    "C", "Incorrect. orElse returns the default argument provided.",
+                                    "D", "Incorrect. Eager evaluation can cause unnecessary database or network calls."),
+                            "Java 8+ & Modern Java", "optional-api", diff, exp, "Code analysis",
+                            "Always prefer orElseGet() when the fallback involves computing an object or database lookup.");
+            }
         } else {
-            // Core Java snippet
-            return createQuestion(
-                    uid,
-                    "What will be the output of the following Java code?\n\n```java\nint x = " + a + ";\nint y = " + b + ";\nSystem.out.println(x > y ? \"Alpha\" : (y % x == 0 ? \"Beta\" : \"Gamma\"));\n```",
-                    List.of(
-                            (b % a == 0) ? "Beta" : "Gamma",
-                            (b % a == 0) ? "Gamma" : "Beta",
-                            "Alpha",
-                            "Compilation Error"
-                    ),
-                    (b % a == 0) ? "Beta" : "Gamma",
-                    "Since " + a + " is not greater than " + b + ", the ternary operator evaluates the false branch. Because " + b + " % " + a + " evaluates to " + (b % a) + ", the resulting output is " + ((b % a == 0) ? "Beta" : "Gamma") + ".",
-                    Map.of(
-                            "A", "Correct based on the evaluation of the ternary operator logic.",
-                            "B", "Incorrect calculation of modulo condition.",
-                            "C", "Incorrect because " + a + " is less than " + b + ".",
-                            "D", "Incorrect. Nested ternary operators are valid Java expressions."
-                    ),
-                    "Core Java", "java-syntax", diff, exp, "Output-based",
-                    "Test your ability to trace conditional ternary expressions quickly under interview pressure."
-            );
+            // General Core Java & JVM
+            switch (variant % 3) {
+                case 0:
+                    int val1 = 100;
+                    int val2 = 200;
+                    return createQuestion(uid,
+                            "What does the following Java code print?\n\n```java\nInteger a = " + val1 + ", b = " + val1 + ";\nInteger c = " + val2 + ", d = " + val2 + ";\nSystem.out.println((a == b) + \" \" + (c == d));\n```",
+                            List.of("true false", "true true", "false false", "false true"),
+                            "true false",
+                            "Java caches Integer objects between -128 and 127 (IntegerCache). Values in this range share the same cached reference, so (a == b) is true. Values outside this range (like 200) create separate heap instances, so (c == d) is false.",
+                            Map.of("A", "Correct. a and b are cached by IntegerCache; c and d are separate heap objects.",
+                                    "B", "Incorrect. 200 exceeds the default IntegerCache upper bound of 127.",
+                                    "C", "Incorrect. 100 is within the -128 to 127 cached range.",
+                                    "D", "Incorrect. c == d cannot be true while a == b is false."),
+                            "Core Java", "jvm-internals", diff, exp, "Output-based",
+                            "Always use equals() for object wrapper equality comparisons, never ==.");
+                case 1:
+                    return createQuestion(uid,
+                            "What is the key advantage of `ZGC` (Z Garbage Collector) introduced in modern Java (JDK 17/21)?",
+                            List.of("Sub-millisecond maximum pause times regardless of heap size (from 8MB to 16TB)",
+                                    "Zero CPU overhead during collection cycles",
+                                    "It eliminates the need to allocate Java heap memory",
+                                    "It automatically fixes OutOfMemoryErrors at runtime"),
+                            "Sub-millisecond maximum pause times regardless of heap size (from 8MB to 16TB)",
+                            "ZGC performs all heavy GC work concurrently (concurrent marking, relocation, reference processing). Its maximum stop-the-world pause times are consistently below 1 millisecond.",
+                            Map.of("A", "Correct. ZGC delivers sub-millisecond pauses across massive heap sizes.",
+                                    "B", "Incorrect. Concurrent GC threads consume modest CPU cycles.",
+                                    "C", "Incorrect. All Java objects reside on the heap.",
+                                    "D", "Incorrect. ZGC cannot prevent OOM if heap memory is exhausted."),
+                            "JVM & Performance Tuning", "gc-algorithms", diff, exp, "Conceptual MCQ",
+                            "Highlighting Generational ZGC in Java 21 demonstrates up-to-date knowledge of modern Java runtime internals.");
+                default:
+                    return createQuestion(uid,
+                            "What happens when an exception is thrown in a `try` block, and the `finally` block also executes a `return` statement?",
+                            List.of("The exception is suppressed and silently swallowed; the finally return value is returned to the caller",
+                                    "The exception is thrown and the finally return statement is ignored",
+                                    "A MultipleReturnException is thrown at runtime",
+                                    "The code will fail to compile with an unreachable statement error"),
+                            "The exception is suppressed and silently swallowed; the finally return value is returned to the caller",
+                            "A return statement inside a finally block overrides any unhandled exception or previous return in the try/catch block, causing the exception to be silently discarded. This is considered an anti-pattern.",
+                            Map.of("A", "Correct. Returning from a finally block discards and swallows active exceptions.",
+                                    "B", "Incorrect. The finally return takes precedence over thrown exceptions.",
+                                    "C", "Incorrect. Java does not have a MultipleReturnException.",
+                                    "D", "Incorrect. The code compiles without error but violates clean coding practices."),
+                            "Exception Handling & Best Practices", "exception-hierarchy", diff, exp, "Interview trick questions",
+                            "Never place return or throw statements inside finally blocks; it hides severe application bugs.");
+            }
         }
     }
 
@@ -215,342 +392,105 @@ public class QuestionBankService {
         list.add(createQuestion(
                 "q_java_01",
                 "What is the output of the following Java snippet?\n\n```java\nString s1 = \"prepforge\";\nString s2 = new String(\"prepforge\");\nString s3 = s2.intern();\nSystem.out.println((s1 == s2) + \" \" + (s1 == s3));\n```",
-                List.of("true true", "false true", "false false", "true false"),
+                List.of("false true", "true true", "false false", "true false"),
                 "false true",
-                "s1 points to the string literal in the String Pool. s2 is created in heap memory, so (s1 == s2) evaluates to false. Calling s2.intern() returns the canonical representation from the String Pool, which is the exact same reference as s1, making (s1 == s3) evaluate to true.",
-                Map.of(
-                        "A", "Incorrect because 'new String()' explicitly creates a new object on the heap, so s1 and s2 refer to distinct heap memory addresses.",
-                        "B", "Correct. 's1 == s2' is false because s2 is a separate heap instance, but 's1 == s3' is true because s2.intern() returns the String Pool reference identical to s1.",
-                        "C", "Incorrect because 's2.intern()' returns the interned reference in the String Constant Pool where s1 resides.",
-                        "D", "Incorrect because 's1 == s2' cannot be true due to object reference inequality."
-                ),
+                "s1 points to the string literal in the String Pool. s2 is created in heap memory, so (s1 == s2) evaluates to false. Calling s2.intern() returns the canonical reference from the String Pool, identical to s1, making (s1 == s3) true.",
+                Map.of("A", "Correct. s2 is on the heap, but s2.intern() returns the pooled reference matching s1.",
+                        "B", "Incorrect. new String() always creates a separate heap instance.",
+                        "C", "Incorrect. s1 == s3 is true due to string pooling.",
+                        "D", "Incorrect. s1 == s2 cannot be true."),
                 "Core Java", "jvm-internals", "Medium", "1-2 years", "Output-based",
-                "Interviewers love asking about String Constant Pool and intern() to test your understanding of heap memory allocation versus string pooling."
+                "Interviewers love asking about String Constant Pool and intern() to test understanding of heap allocation versus string pooling."
         ));
 
         // 2. Core Java - Equals & HashCode
         list.add(createQuestion(
                 "q_java_02",
                 "Why is it strongly recommended to override `hashCode()` whenever `equals()` is overridden in Java?",
-                List.of(
-                        "To prevent compilation errors when defining custom classes.",
-                        "To fulfill the general contract so that equal objects produce equal hash codes in hash-based collections like HashMap and HashSet.",
-                        "To ensure objects are placed into the exact same LinkedList bucket inside HashMap.",
-                        "To improve the garbage collection cycle performance of the object."
-                ),
-                "To fulfill the general contract so that equal objects produce equal hash codes in hash-based collections like HashMap and HashSet.",
-                "According to the Java Object contract: if two objects are equal according to equals(Object), calling hashCode() on each must produce the same integer result. If violated, hash-based collections cannot reliably locate, store, or retrieve objects.",
-                Map.of(
-                        "A", "Incorrect. Overriding equals() without hashCode() compiles without error, though it generates a compiler/linter warning.",
-                        "B", "Correct. The Object contract guarantees that two equal objects must have identical hash codes to function properly in Hash-based data structures.",
-                        "C", "Incorrect. The goal of hashing is even distribution across buckets, not clustering into the same bucket.",
-                        "D", "Incorrect. hashCode() has no direct relation to garbage collection cycles."
-                ),
+                List.of("To fulfill the general contract so that equal objects produce equal hash codes in hash-based collections",
+                        "To prevent compilation errors when defining custom classes",
+                        "To ensure objects are placed into the exact same LinkedList bucket inside HashMap",
+                        "To improve the garbage collection cycle performance of the object"),
+                "To fulfill the general contract so that equal objects produce equal hash codes in hash-based collections",
+                "According to the Java Object contract: if two objects are equal according to equals(Object), calling hashCode() on each must produce the same integer result. If violated, HashMap cannot reliably retrieve objects.",
+                Map.of("A", "Correct. The Object contract guarantees that equal objects must have identical hash codes.",
+                        "B", "Incorrect. Overriding equals() without hashCode() compiles without error.",
+                        "C", "Incorrect. The goal of hashing is even distribution across buckets.",
+                        "D", "Incorrect. hashCode() has no relation to garbage collection cycles."),
                 "Core Java", "java-syntax", "Medium", "1-2 years", "Conceptual MCQ",
                 "Always mention that violating the equals/hashCode contract causes HashMap.get() to return null even when a matching key exists."
         ));
 
-        // 3. Core Java - Pass-by-value
-        list.add(createQuestion(
-                "q_java_03",
-                "How does Java pass object references into methods when calling `modify(MyObject obj)`?",
-                List.of(
-                        "Strictly pass-by-value; a copy of the reference address is passed by value.",
-                        "Strictly pass-by-reference; the original memory variable itself is passed.",
-                        "Pass-by-reference for objects, and pass-by-value for primitive types.",
-                        "Pass-by-value for immutable objects and pass-by-reference for mutable objects."
-                ),
-                "Strictly pass-by-value; a copy of the reference address is passed by value.",
-                "Java is ALWAYS strictly pass-by-value. When an object reference is passed, a copy of the reference pointer is passed by value. Reassigning the parameter inside the method does not affect the caller's reference.",
-                Map.of(
-                        "A", "Correct. Java is purely pass-by-value. For objects, the value being copied is the object's reference address.",
-                        "B", "Incorrect. Java does not have C++ style pass-by-reference.",
-                        "C", "Incorrect. Both primitives and object references are passed by value in Java.",
-                        "D", "Incorrect. Immutability does not change Java's parameter passing semantics."
-                ),
-                "Core Java", "java-syntax", "Easy", "0-1 years", "Conceptual MCQ",
-                "Be ready to demonstrate that `obj = new MyObject()` inside a helper method leaves the caller's variable unchanged."
-        ));
-
-        // 4. Collections - HashMap Treeify
+        // 3. Collections - HashMap Treeify
         list.add(createQuestion(
                 "q_col_01",
                 "In Java 8+, what condition causes a `HashMap` bucket to transition from a LinkedList to a Balanced Red-Black Tree (Treeify)?",
-                List.of(
-                        "When the number of total elements in the HashMap exceeds 64.",
-                        "When the number of entries in a single bucket reaches TREEIFY_THRESHOLD (8) AND total table capacity is at least MIN_TREEIFY_CAPACITY (64).",
-                        "Whenever a single hash collision occurs.",
-                        "When the load factor exceeds 0.75."
-                ),
-                "When the number of entries in a single bucket reaches TREEIFY_THRESHOLD (8) AND total table capacity is at least MIN_TREEIFY_CAPACITY (64).",
-                "In Java 8, when a bucket has 8 elements and the table capacity is at least 64, the bucket is transformed into a TreeNode (Red-Black Tree), improving worst-case search time complexity from O(n) to O(log n). If table capacity is less than 64, it resizes the table instead.",
-                Map.of(
-                        "A", "Incorrect. Exceeding 64 elements alone triggers table resizing based on load factor, not necessarily treeification.",
-                        "B", "Correct. Both conditions must be met: bucket length >= 8 AND array capacity >= 64.",
-                        "C", "Incorrect. Hash collisions are initially handled by chaining in a linked list.",
-                        "D", "Incorrect. Load factor 0.75 determines when the overall table capacity doubles."
-                ),
-                "Java Collections Framework", "hashmap-internals", "Hard", "2-3 years", "Code analysis",
+                List.of("When bucket entries reach TREEIFY_THRESHOLD (8) AND table capacity is at least MIN_TREEIFY_CAPACITY (64)",
+                        "When the total number of elements in the HashMap exceeds 64",
+                        "Whenever any single hash collision occurs",
+                        "When the load factor exceeds 0.75"),
+                "When bucket entries reach TREEIFY_THRESHOLD (8) AND table capacity is at least MIN_TREEIFY_CAPACITY (64)",
+                "When a bucket has 8 elements and the table capacity is at least 64, the bucket transforms into a Red-Black Tree, improving worst-case search time complexity from O(n) to O(log n). If table capacity is less than 64, it resizes the table instead.",
+                Map.of("A", "Correct. Both conditions must be met: bucket length >= 8 AND array capacity >= 64.",
+                        "B", "Incorrect. Exceeding 64 elements triggers table resizing based on load factor.",
+                        "C", "Incorrect. Collisions initially chain into a linked list.",
+                        "D", "Incorrect. Load factor 0.75 determines when table capacity doubles."),
+                "Java Collections Framework", "hashmap-internals", "Hard", "2-3 years", "Conceptual MCQ",
                 "Highlighting the worst-case time complexity transition from O(N) to O(log N) demonstrates senior-level knowledge of Java internals."
         ));
 
-        // 5. Collections - Fail-Fast vs Fail-Safe
+        // 4. Multithreading - volatile semantics
         list.add(createQuestion(
-                "q_col_02",
-                "What exception is thrown when an `ArrayList` is structurally modified while iterating through it using a standard for-each loop?",
-                List.of(
-                        "ConcurrentModificationException",
-                        "IllegalStateException",
-                        "IndexOutOfBoundsException",
-                        "NoSuchElementException"
-                ),
-                "ConcurrentModificationException",
-                "ArrayList iterators are fail-fast. They check the internal `modCount` against expectedModCount on every next() call. If modified during iteration without using Iterator.remove(), a ConcurrentModificationException is immediately thrown.",
-                Map.of(
-                        "A", "Correct. ArrayList uses a fail-fast iterator that throws ConcurrentModificationException upon structural modification.",
-                        "B", "Incorrect. IllegalStateException is thrown if Iterator.remove() is called before next().",
-                        "C", "Incorrect. Array bounds are not violated.",
-                        "D", "Incorrect. NoSuchElementException is thrown when next() is called past the end of the collection."
-                ),
-                "Java Collections Framework", "list-set-implementations", "Easy", "0-1 years", "Conceptual MCQ",
-                "Explain the difference between fail-fast (ArrayList, HashMap) and fail-safe (CopyOnWriteArrayList, ConcurrentHashMap) collections."
+                "q_multi_01",
+                "What memory guarantee is provided by the `volatile` keyword in Java?",
+                List.of("Guarantees visibility across threads and establishes a happens-before relationship, but does NOT guarantee atomicity for compound operations",
+                        "Guarantees atomicity for all operations including increments like count++",
+                        "Acquires an exclusive monitor lock on the object",
+                        "Prevents the thread from being preempted by the OS scheduler"),
+                "Guarantees visibility across threads and establishes a happens-before relationship, but does NOT guarantee atomicity for compound operations",
+                "volatile ensures reads and writes go directly to main memory and prevents compiler/CPU instruction reordering. However, compound read-modify-write operations like count++ are not atomic.",
+                Map.of("A", "Correct. volatile provides visibility and memory ordering, but not atomicity for compound operations.",
+                        "B", "Incorrect. count++ requires synchronization or AtomicInteger for atomicity.",
+                        "C", "Incorrect. volatile does not use monitor locks.",
+                        "D", "Incorrect. volatile has no control over OS thread scheduling."),
+                "Multithreading & Concurrency", "locks-volatiles", "Medium", "1-2 years", "Conceptual MCQ",
+                "A classic interview question: explain why two threads incrementing a volatile int 10,000 times result in a value less than 20,000."
         ));
 
-        // 6. Multithreading - Volatile vs Atomic
-        list.add(createQuestion(
-                "q_thread_01",
-                "What is the primary difference between the `volatile` keyword and `AtomicInteger` in Java concurrency?",
-                List.of(
-                        "volatile guarantees atomicity of compound operations (like count++), whereas AtomicInteger only guarantees visibility.",
-                        "volatile guarantees visibility across CPU caches using memory barriers, but does NOT guarantee compound operation atomicity. AtomicInteger provides both visibility and atomic CAS (Compare-And-Swap) operations.",
-                        "volatile locks the monitor of the object, while AtomicInteger is non-blocking.",
-                        "volatile is deprecated in modern Java in favor of AtomicInteger."
-                ),
-                "volatile guarantees visibility across CPU caches using memory barriers, but does NOT guarantee compound operation atomicity. AtomicInteger provides both visibility and atomic CAS (Compare-And-Swap) operations.",
-                "volatile ensures that reads and writes go directly to main memory (visibility and instruction reordering prevention), but operations like i++ (read-modify-write) are not atomic. AtomicInteger uses low-level hardware CAS instructions to provide atomic updates.",
-                Map.of(
-                        "A", "Incorrect. volatile does NOT guarantee atomicity of compound operations like count++.",
-                        "B", "Correct. volatile provides memory visibility without mutual exclusion; AtomicInteger provides atomic lock-free updates via CAS.",
-                        "C", "Incorrect. volatile is completely non-blocking and does not acquire monitor locks.",
-                        "D", "Incorrect. volatile is actively used throughout modern concurrency frameworks."
-                ),
-                "Multithreading & Concurrency", "locks-volatiles", "Hard", "2-3 years", "Conceptual MCQ",
-                "Explain the three steps of 'count++' (read, modify, write) to clearly demonstrate why volatile alone fails under concurrent writes."
-        ));
-
-        // 7. Multithreading - CompletableFuture
-        list.add(createQuestion(
-                "q_thread_02",
-                "In Java Concurrency, which method on `CompletableFuture` executes a subsequent asynchronous stage only when BOTH supplied stages complete successfully?",
-                List.of(
-                        "thenCombineAsync()",
-                        "applyToEitherAsync()",
-                        "thenAcceptBoth()",
-                        "allOf()"
-                ),
-                "thenCombineAsync()",
-                "thenCombine / thenCombineAsync takes another CompletableFuture and a BiFunction, executing when both upstream futures complete and transforming both results into a single result.",
-                Map.of(
-                        "A", "Correct. thenCombine executes a function with results of two completed futures.",
-                        "B", "Incorrect. applyToEither executes when either one of the two completes first.",
-                        "C", "Incorrect. thenAcceptBoth consumes both results but returns CompletableFuture<Void> without producing a return value.",
-                        "D", "Incorrect. allOf takes a varargs array of futures and returns CompletableFuture<Void>."
-                ),
-                "Multithreading & Concurrency", "executors-futures", "Medium", "2-3 years", "Conceptual MCQ",
-                "CompletableFuture pipelines are frequently tested in modern Java backend and reactive programming interviews."
-        ));
-
-        // 8. Java 8 - Streams Laziness
-        list.add(createQuestion(
-                "q_stream_01",
-                "Consider the following code. How many times will `peek()` print to the console?\n\n```java\nStream.of(\"one\", \"two\", \"three\", \"four\")\n    .filter(e -> e.length() > 3)\n    .peek(e -> System.out.println(\"Filtered: \" + e));\n```",
-                List.of("2 times", "4 times", "0 times", "Throws an IllegalStateException"),
-                "0 times",
-                "Java Streams are lazy. Intermediate operations like filter() and peek() are not executed unless a terminal operation (like collect(), forEach(), count()) is invoked on the stream pipeline.",
-                Map.of(
-                        "A", "Incorrect. Although 2 elements have length > 3, the stream is never evaluated.",
-                        "B", "Incorrect. Streams do not eagerly process elements.",
-                        "C", "Correct. Because there is no terminal operation attached to the pipeline, intermediate operations are never triggered due to lazy evaluation.",
-                        "D", "Incorrect. The syntax is completely valid and creates an unconsumed Stream instance without throwing exceptions."
-                ),
-                "Streams API", "stream-operations", "Medium", "1-2 years", "Interview trick questions",
-                "Stream laziness is one of the top 3 Java 8 trick questions asked in technical rounds. Always look for the terminal operation."
-        ));
-
-        // 9. Java 8 - FlatMap
-        list.add(createQuestion(
-                "q_stream_02",
-                "What is the difference between `map()` and `flatMap()` in Java Streams?",
-                List.of(
-                        "map transforms each element into another object (1-to-1), whereas flatMap transforms each element into a Stream and flattens multiple streams into a single Stream (1-to-N).",
-                        "map is for primitive types and flatMap is for reference types.",
-                        "flatMap executes in parallel whereas map executes sequentially.",
-                        "map modifies the underlying collection in place, whereas flatMap creates a copy."
-                ),
-                "map transforms each element into another object (1-to-1), whereas flatMap transforms each element into a Stream and flattens multiple streams into a single Stream (1-to-N).",
-                "map() produces one output element for each input element. flatMap() takes a function that returns a stream of elements and flattens the resulting streams of streams into a single contiguous stream.",
-                Map.of(
-                        "A", "Correct. map transforms Stream<T> to Stream<R>; flatMap transforms Stream<List<T>> or Stream<Stream<T>> to Stream<T>.",
-                        "B", "Incorrect. Map and flatMap both operate on object and primitive streams.",
-                        "C", "Incorrect. Both operations follow the stream's sequential/parallel mode.",
-                        "D", "Incorrect. Streams never modify their underlying source collections."
-                ),
-                "Streams API", "stream-operations", "Easy", "0-1 years", "Conceptual MCQ",
-                "Give a quick example like flattening a `List<Order>` containing multiple `List<Item>` into a single `Stream<Item>`."
-        ));
-
-        // 10. Spring Boot - Transactional Proxy Bypass
+        // 5. Spring Boot - Auto-configuration
         list.add(createQuestion(
                 "q_spring_01",
-                "What happens when a method annotated with `@Transactional` calls another `@Transactional(propagation = Propagation.REQUIRES_NEW)` method within the same Spring Bean class?",
-                List.of(
-                        "A new independent physical database transaction is suspended and started as expected.",
-                        "The inner method runs within the existing transaction because Spring's standard CGLIB proxy is bypassed on self-invocation (this-call).",
-                        "Spring throws an UnsupportedOperationException at runtime.",
-                        "The existing transaction is immediately committed before the inner method runs."
-                ),
-                "The inner method runs within the existing transaction because Spring's standard CGLIB proxy is bypassed on self-invocation (this-call).",
-                "Spring AOP works via dynamic proxies. When a method invokes another method within the same instance using 'this', the proxy is bypassed, meaning annotations like @Transactional, @Async, and @Cacheable on the internal method are ignored.",
-                Map.of(
-                        "A", "Incorrect. Propagation.REQUIRES_NEW requires intercepting through the proxy, which does not happen during internal self-invocation.",
-                        "B", "Correct. Internal self-invocation bypasses the Spring proxy, causing the inner method to run without its configured transactional advice.",
-                        "C", "Incorrect. No exception is thrown; it silently executes within the caller's context.",
-                        "D", "Incorrect. The outer transaction remains active and uncommitted."
-                ),
-                "Spring Boot", "auto-configuration", "Hard", "3-5 years", "Code analysis",
-                "Mentioning Spring AOP proxy interception and suggesting self-injection or extracting to a separate service shows deep Spring architecture mastery."
+                "How does Spring Boot's `@ConditionalOnMissingBean` annotation assist in writing robust microservice libraries?",
+                List.of("It provides a default bean implementation while allowing application developers to override it by defining their own bean",
+                        "It prevents circular dependencies between beans",
+                        "It forces Spring to initialize the bean as a prototype",
+                        "It validates that required environment variables are non-null"),
+                "It provides a default bean implementation while allowing application developers to override it by defining their own bean",
+                "@ConditionalOnMissingBean tells Spring Boot to register the autoconfigured bean ONLY if the user has not already defined a bean of that type, enabling seamless custom overriding.",
+                Map.of("A", "Correct. Auto-configuration uses @ConditionalOnMissingBean to let user configurations take precedence.",
+                        "B", "Incorrect. Circular dependencies are handled via design refactoring or @Lazy.",
+                        "C", "Incorrect. Scope is defined by @Scope.",
+                        "D", "Incorrect. Configuration properties validation uses @Validated."),
+                "Spring Boot", "auto-configuration", "Medium", "1-2 years", "Best-practice",
+                "Mention that custom Spring Boot starters use @ConditionalOnMissingBean so developers can easily customize behavior."
         ));
 
-        // 11. Spring Security - FilterChain
+        // 6. Spring Security - FilterChain
         list.add(createQuestion(
                 "q_sec_01",
-                "In Spring Security 6+ (Spring Boot 3+), how is the security filter chain configured instead of extending the deprecated `WebSecurityConfigurerAdapter`?",
-                List.of(
-                        "By declaring a `@Bean` method that returns a `SecurityFilterChain` taking `HttpSecurity` as a parameter.",
-                        "By implementing the `SecurityFilter` interface directly on @Controller classes.",
-                        "By configuring security XML elements inside application.yml.",
-                        "By annotating the main application class with `@EnableWebSecurityAdapter`."
-                ),
-                "By declaring a `@Bean` method that returns a `SecurityFilterChain` taking `HttpSecurity` as a parameter.",
-                "Spring Security 5.7+ deprecated WebSecurityConfigurerAdapter in favor of component-based security configuration using a @Bean of type SecurityFilterChain, enabling cleaner lambda-based DSL configuration.",
-                Map.of(
-                        "A", "Correct. Standard Spring Boot 3+ security declares `@Bean public SecurityFilterChain filterChain(HttpSecurity http) throws Exception`.",
-                        "B", "Incorrect. Security is handled by the DelegatingFilterProxy before reaching controllers.",
-                        "C", "Incorrect. Modern Spring Security uses programmatic Java DSL configuration.",
-                        "D", "Incorrect. WebSecurityConfigurerAdapter and associated adapters are removed."
-                ),
-                "Spring Security & JWT", "filter-chain", "Medium", "2-3 years", "Best-practice",
-                "Highlighting Spring Boot 3 / Spring Security 6 lambda DSL syntax (`http.authorizeHttpRequests(auth -> auth...)`) demonstrates up-to-date modern Java expertise."
-        ));
-
-        // 12. REST APIs - 201 Created
-        list.add(createQuestion(
-                "q_rest_01",
-                "Which HTTP status code should be returned by a REST API when a `POST /orders` request successfully creates a new resource?",
-                List.of(
-                        "200 OK with the resource representation.",
-                        "201 Created with a `Location` header pointing to the new resource URI.",
-                        "204 No Content.",
-                        "202 Accepted."
-                ),
-                "201 Created with a `Location` header pointing to the new resource URI.",
-                "RFC 9110 specifies that 201 Created indicates the request has succeeded and led to the creation of one or more new resources, typically accompanied by a Location header referencing the created entity.",
-                Map.of(
-                        "A", "Incorrect. 200 OK is general success, whereas 201 Created is the standard RFC status for resource creation.",
-                        "B", "Correct. 201 Created with Location header is the standard RESTful specification.",
-                        "C", "Incorrect. 204 No Content is typically used for successful DELETE or PUT operations with no response body.",
-                        "D", "Incorrect. 202 Accepted means the request has been accepted for asynchronous batch processing, not yet completed."
-                ),
-                "RESTful API Design", "http-semantics", "Easy", "0-1 years", "Best-practice",
-                "Always mention returning both the 201 status code and the `Location: /orders/{id}` response header in REST design interviews."
-        ));
-
-        // 13. SQL - WHERE vs HAVING
-        list.add(createQuestion(
-                "q_sql_01",
-                "What is the difference between `WHERE` and `HAVING` clauses in standard SQL?",
-                List.of(
-                        "WHERE filters aggregate function values, whereas HAVING filters individual table rows.",
-                        "WHERE filters individual rows before aggregation occurs, whereas HAVING filters grouped rows after the GROUP BY aggregation.",
-                        "HAVING can only be used with subqueries.",
-                        "WHERE and HAVING are completely interchangeable in modern SQL engines."
-                ),
-                "WHERE filters individual rows before aggregation occurs, whereas HAVING filters grouped rows after the GROUP BY aggregation.",
-                "The WHERE clause filters rows before any grouping or aggregate functions (SUM, COUNT, AVG) are computed. The HAVING clause applies conditions on the aggregated groups created by GROUP BY.",
-                Map.of(
-                        "A", "Incorrect. WHERE cannot contain aggregate functions like SUM() or AVG().",
-                        "B", "Correct. Execution order: FROM -> WHERE -> GROUP BY -> HAVING -> SELECT -> ORDER BY.",
-                        "C", "Incorrect. HAVING is standard group filtering and does not require subqueries.",
-                        "D", "Incorrect. They serve fundamentally distinct phases in SQL query execution."
-                ),
-                "SQL & Query Optimization", "joins-subqueries", "Easy", "0-1 years", "Conceptual MCQ",
-                "Explaining the SQL logical query processing order (FROM -> WHERE -> GROUP BY -> HAVING -> SELECT) leaves a memorable impression on interviewers."
-        ));
-
-        // 14. DBMS - Isolation Levels
-        list.add(createQuestion(
-                "q_sql_02",
-                "In relational databases, which transaction isolation level prevents `Dirty Reads` and `Non-Repeatable Reads`, but may still permit `Phantom Reads` under standard ANSI SQL?",
-                List.of(
-                        "Read Uncommitted",
-                        "Read Committed",
-                        "Repeatable Read",
-                        "Serializable"
-                ),
-                "Repeatable Read",
-                "Under ANSI SQL-92: Repeatable Read guarantees that any row read within a transaction cannot be modified by other transactions, preventing dirty and non-repeatable reads. Phantom reads (new rows inserted by another transaction that match a search condition) can theoretically still occur.",
-                Map.of(
-                        "A", "Incorrect. Read Uncommitted permits dirty reads.",
-                        "B", "Incorrect. Read Committed prevents dirty reads but allows non-repeatable reads.",
-                        "C", "Correct. Repeatable Read locks the read rows, preventing non-repeatable reads while standard ANSI definition permits phantom inserts.",
-                        "D", "Incorrect. Serializable prevents all concurrency anomalies including phantom reads."
-                ),
-                "DBMS & Database Transactions", "isolation-levels", "Hard", "3-5 years", "Conceptual MCQ",
-                "Note that MySQL InnoDB uses Next-Key locking to prevent phantom reads even in Repeatable Read mode, which is a great extra interview nugget."
-        ));
-
-        // 15. Kafka - Partitions & Ordering
-        list.add(createQuestion(
-                "q_kafka_01",
-                "How does Apache Kafka guarantee strict ordering of messages?",
-                List.of(
-                        "Across all partitions globally within a topic.",
-                        "Only within a single partition of a topic for messages that share the same partition key.",
-                        "By using a global distributed lock across consumer groups.",
-                        "Through automatic timestamp reordering at the consumer side."
-                ),
-                "Only within a single partition of a topic for messages that share the same partition key.",
-                "Kafka only guarantees strict message order within a single partition. If total ordering is required across related messages, they must be published with the same message key so that Kafka's default murmur2 partitioner routes them to the same partition.",
-                Map.of(
-                        "A", "Incorrect. Total ordering across multiple partitions is not supported by Kafka's distributed architecture.",
-                        "B", "Correct. Message ordering is strictly guaranteed within an individual partition.",
-                        "C", "Incorrect. Kafka achieves high throughput by avoiding global locks.",
-                        "D", "Incorrect. Consumers read messages sequentially as stored in log offsets."
-                ),
-                "Kafka & Messaging in Java", "kafka-architecture", "Medium", "2-3 years", "Conceptual MCQ",
-                "Mention that having too few partitions can become a scalability bottleneck even though it simplifies ordering."
-        ));
-
-        // 16. Redis - Cache-Aside Pattern
-        list.add(createQuestion(
-                "q_redis_01",
-                "In the `Cache-Aside` (Lazy Loading) pattern, what are the steps taken by a Spring Boot application when updating a database record?",
-                List.of(
-                        "Update the database record first, and then evict/delete the corresponding key from the Redis cache.",
-                        "Update Redis cache only and rely on a background batch job to write to the database.",
-                        "Delete the database record and write new data into Redis with a 24-hour TTL.",
-                        "Acquire a global database lock and update Redis and DB in a two-phase commit."
-                ),
-                "Update the database record first, and then evict/delete the corresponding key from the Redis cache.",
-                "In Cache-Aside, on write/update, the application updates the authoritative database and evicts (invalidates) the cache entry. The next read operation will experience a cache miss, fetch the fresh data from the database, and repopulate Redis.",
-                Map.of(
-                        "A", "Correct. DB update followed by cache eviction is the industry standard Cache-Aside pattern.",
-                        "B", "Incorrect. Writing to cache and syncing to DB later is the Write-Behind (Write-Back) pattern.",
-                        "C", "Incorrect. Deleting the DB record destroys authoritative persistence.",
-                        "D", "Incorrect. 2PC is not standard for Redis caching and introduces severe latency."
-                ),
-                "Redis & Backend Caching", "cache-patterns", "Medium", "1-2 years", "Best-practice",
-                "Always recommend cache eviction over cache update on writes to prevent race conditions from concurrent updates."
+                "In Spring Security 6+ (Spring Boot 3+), how is HTTP security configured without extending deprecated adapter classes?",
+                List.of("By registering a `@Bean` returning a `SecurityFilterChain`",
+                        "By extending `WebSecurityConfigurerAdapter`",
+                        "By configuring web.xml with security constraints",
+                        "By defining security policies inside application.properties only"),
+                "By registering a `@Bean` returning a `SecurityFilterChain`",
+                "Spring Security 5.7+ deprecated WebSecurityConfigurerAdapter. In Spring Boot 3, security is configured component-style by defining a SecurityFilterChain @Bean taking HttpSecurity.",
+                Map.of("A", "Correct. The modern standard is a @Bean returning SecurityFilterChain.",
+                        "B", "Incorrect. WebSecurityConfigurerAdapter was deprecated and completely removed in Spring Security 6.",
+                        "C", "Incorrect. web.xml is obsolete in modern Spring Boot applications.",
+                        "D", "Incorrect. Complete security policies cannot be configured solely via properties."),
+                "Spring Security & JWT", "filter-chain", "Medium", "1-2 years", "Best-practice",
+                "Highlighting the shift from inheritance (WebSecurityConfigurerAdapter) to composition (SecurityFilterChain bean) shows current knowledge."
         ));
 
         return list;

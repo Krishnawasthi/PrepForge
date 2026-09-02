@@ -114,47 +114,71 @@ public class GeminiAIService implements AIService {
 
         String apiKey = getEffectiveApiKey();
         if (apiKey == null) {
-            log.warn("No Gemini API key configured. Question generation will fail. Please set GEMINI_API_KEY.");
+            log.warn("No Gemini API key configured. Please set GEMINI_API_KEY.");
             return CompletableFuture.completedFuture(Collections.emptyList());
         }
 
         return CompletableFuture.supplyAsync(() -> {
-            List<Map<String, Object>> allQuestions = new ArrayList<>();
-            Set<String> seenQuestions = new HashSet<>();
+            List<Map<String, Object>> allQuestions = Collections.synchronizedList(new ArrayList<>());
+            Set<String> seenQuestions = Collections.synchronizedSet(new HashSet<>());
 
-            // For large counts, generate in chunks to avoid token limits
-            int remaining = count;
-            int chunkNum = 0;
+            // Determine chunking: 10 questions per parallel chunk
+            int chunkSize = 10;
+            int numChunks = (int) Math.ceil((double) count / chunkSize);
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
 
-            while (remaining > 0) {
-                int chunkCount = Math.min(CHUNK_SIZE, remaining);
-                chunkNum++;
+            log.info("Launching {} PARALLEL Gemini generation tasks for total {} questions across topics: {}",
+                    numChunks, count, topics);
 
-                log.info("Gemini chunk {}: generating {} questions for topics={}, difficulty={}, exp={}",
-                        chunkNum, chunkCount, topics, difficulty, experienceLevel);
+            for (int i = 0; i < numChunks; i++) {
+                final int chunkIndex = i + 1;
+                final int questionsInChunk = Math.min(chunkSize, count - (i * chunkSize));
+                if (questionsInChunk <= 0) break;
 
-                List<Map<String, Object>> chunk = generateChunk(
-                        apiKey, topics, subTopics, experienceLevel,
-                        questionTypes, chunkCount, promptDescription, seenQuestions, chunkNum, difficulty);
-
-                for (Map<String, Object> q : chunk) {
-                    String qText = String.valueOf(q.getOrDefault("question", ""));
-                    if (!qText.isBlank() && seenQuestions.add(qText.toLowerCase().trim())) {
-                        allQuestions.add(q);
+                // Distribute topics among chunks so all selected topics get covered
+                final List<String> chunkTopics;
+                if (topics != null && !topics.isEmpty()) {
+                    if (topics.size() == 1) {
+                        chunkTopics = topics;
+                    } else {
+                        // Round-robin assign topics to chunk
+                        int topicIdx = i % topics.size();
+                        String primaryTopic = topics.get(topicIdx);
+                        int nextTopicIdx = (topicIdx + 1) % topics.size();
+                        String secondaryTopic = topics.get(nextTopicIdx);
+                        chunkTopics = List.of(primaryTopic, secondaryTopic);
                     }
+                } else {
+                    chunkTopics = List.of("Core Java", "Spring Boot");
                 }
 
-                remaining -= chunkCount;
+                CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                    List<Map<String, Object>> chunk = generateChunk(
+                            apiKey, chunkTopics, subTopics, experienceLevel,
+                            questionTypes, questionsInChunk, promptDescription,
+                            Collections.emptySet(), chunkIndex, difficulty);
 
-                // Safety: If Gemini returned nothing in this chunk, break to avoid infinite loop
-                if (chunk.isEmpty()) {
-                    log.warn("Gemini returned empty chunk for count={}. Breaking loop.", chunkCount);
-                    break;
-                }
+                    for (Map<String, Object> q : chunk) {
+                        String qText = String.valueOf(q.getOrDefault("question", "")).trim();
+                        if (!qText.isBlank() && seenQuestions.add(qText.toLowerCase())) {
+                            allQuestions.add(q);
+                        }
+                    }
+                });
+                futures.add(future);
             }
 
-            log.info("Gemini total questions generated: {} (requested: {})", allQuestions.size(), count);
-            return allQuestions;
+            try {
+                // Wait for all parallel chunks with a combined timeout of 25 seconds
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                        .get(25, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("Some Gemini parallel chunks finished or timed out: {}", e.getMessage());
+            }
+
+            log.info("Gemini parallel generation completed: {} unique questions ready (target: {})",
+                    allQuestions.size(), count);
+            return new ArrayList<>(allQuestions);
         });
     }
 
