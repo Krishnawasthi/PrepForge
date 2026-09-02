@@ -11,5 +11,4 @@ import java.util.Optional;
 public interface TestAttemptRepository extends MongoRepository<TestAttempt, String> {
     Optional<TestAttempt> findByAttemptId(String attemptId);
     List<TestAttempt> findByTestId(String testId);
-    List<TestAttempt> findByAnonymousSessionIdOrderByCompletedAtDesc(String anonymousSessionId);
 }

@@ -1,15 +1,13 @@
 package com.prepforge;
 
-import com.prepforge.dto.*;
+import com.prepforge.dto.CreatePracticeRequest;
+import com.prepforge.dto.PracticeResultDto;
+import com.prepforge.dto.PracticeTestDto;
+import com.prepforge.dto.SubmitPracticeRequest;
 import com.prepforge.repository.QuestionRepository;
 import com.prepforge.repository.TestAttemptRepository;
 import com.prepforge.repository.TestRepository;
-import com.prepforge.repository.TopicRepository;
-import com.prepforge.service.HealthService;
-import com.prepforge.service.QuestionService;
-import com.prepforge.service.ScoringService;
-import com.prepforge.service.TestService;
-import com.prepforge.service.TopicService;
+import com.prepforge.service.PracticeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -20,12 +18,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.mongodb.core.MongoTemplate;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.when;
 
 @SpringBootTest
 @EnableAutoConfiguration(exclude = {
@@ -39,9 +35,6 @@ class PrepforgeApplicationTests {
 	private MongoTemplate mongoTemplate;
 
 	@MockBean
-	private TopicRepository topicRepository;
-
-	@MockBean
 	private QuestionRepository questionRepository;
 
 	@MockBean
@@ -51,100 +44,51 @@ class PrepforgeApplicationTests {
 	private TestAttemptRepository testAttemptRepository;
 
 	@Autowired
-	private TopicService topicService;
-
-	@Autowired
-	private HealthService healthService;
-
-	@Autowired
-	private TestService testService;
-
-	@Autowired
-	private QuestionService questionService;
-
-	@Autowired
-	private ScoringService scoringService;
+	private PracticeService practiceService;
 
 	@Test
 	void contextLoads() {
-		assertNotNull(topicService);
-		assertNotNull(healthService);
-		assertNotNull(testService);
-		assertNotNull(scoringService);
+		assertNotNull(practiceService);
 	}
 
 	@Test
-	void testTopicCatalogContainsJavaBackendTopics() {
-		when(topicRepository.findAll()).thenReturn(Collections.emptyList());
-		List<TopicDto> topics = topicService.getAllTopics();
+	void testTopicsContainsCoreJava() {
+		List<String> topics = practiceService.getTopics();
+		assertNotNull(topics);
 		assertFalse(topics.isEmpty());
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("Core Java")));
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("Spring Boot")));
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("SQL")));
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("Collections")));
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("Spring Security")));
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("Kafka")));
-		assertTrue(topics.stream().anyMatch(t -> t.getName().contains("Redis")));
+		assertTrue(topics.contains("Core Java"));
+		assertTrue(topics.contains("Java Collections Framework"));
+		assertTrue(topics.contains("Streams API"));
 	}
 
 	@Test
-	void testHealthServiceReportsUp() {
-		HealthStatusDto status = healthService.getHealthStatus();
-		assertEquals("UP", status.getStatus());
-		assertEquals("production-ready", status.getEnvironment());
-	}
-
-	@Test
-	void testPromptInterpretation() {
-		String prompt = "I have 1.5 years of Java experience and I'm preparing for a backend developer interview. Give me medium to hard questions focused on Collections, Multithreading, Java 8 Streams and OOP. Include output-based and tricky interview questions.";
-		PromptInterpretationRequest req = PromptInterpretationRequest.builder().prompt(prompt).build();
-		PromptInterpretationResponse resp = testService.interpretUserPrompt(req);
-
-		assertNotNull(resp);
-		assertEquals("1-2 years", resp.getExperienceLevel());
-		assertEquals("Mixed", resp.getDifficulty());
-		assertTrue(resp.getTopics().contains("Java Collections Framework"));
-		assertTrue(resp.getTopics().contains("Multithreading & Concurrency"));
-		assertTrue(resp.getQuestionTypes().contains("Output-based"));
-		assertTrue(resp.getQuestionTypes().contains("Interview trick questions"));
-	}
-
-	@Test
-	void testTestGenerationAndAuthoritativeScoring() {
-		TestConfigRequest config = TestConfigRequest.builder()
-				.anonymousSessionId("anon_test_user")
-				.topics(List.of("Core Java", "Java Collections Framework", "SQL & Query Optimization"))
-				.experienceLevel("1-2 years")
-				.difficulty("Medium")
-				.questionTypes(List.of("Conceptual MCQ", "Output-based"))
+	void testCreatePracticeTestAndSubmit() {
+		CreatePracticeRequest req = CreatePracticeRequest.builder()
+				.topics(List.of("Core Java", "Java Collections Framework"))
+				.experienceLevel("Intermediate")
 				.questionCount(5)
-				.timeLimitMinutes(15)
 				.build();
 
-		TestDetailDto testDetail = testService.generateFullTest(config);
-		assertNotNull(testDetail);
-		assertNotNull(testDetail.getTestId());
-		assertFalse(testDetail.getQuestions().isEmpty());
+		PracticeTestDto test = practiceService.createPracticeTest(req);
+		assertNotNull(test);
+		assertNotNull(test.getTestId());
+		assertEquals(5, test.getQuestions().size());
 
-		// Verify answers are withheld from candidate during test taking
-		assertNull(testDetail.getQuestions().get(0).getCorrectAnswer());
-		assertNull(testDetail.getQuestions().get(0).getExplanation());
-		assertEquals(4, testDetail.getQuestions().get(0).getOptions().size());
+		// Verify answers are withheld during test
+		assertNull(test.getQuestions().get(0).getCorrectAnswer());
+		assertNull(test.getQuestions().get(0).getExplanation());
+		assertEquals(4, test.getQuestions().get(0).getOptions().size());
 
 		// Submit test
-		String firstQId = testDetail.getQuestions().get(0).getId();
-		TestSubmissionRequest submission = TestSubmissionRequest.builder()
-				.anonymousSessionId("anon_test_user")
-				.attemptId("att_test_123")
-				.answers(Map.of(firstQId, "false true"))
-				.timeTakenSeconds(120)
+		String firstQId = test.getQuestions().get(0).getId();
+		SubmitPracticeRequest submitReq = SubmitPracticeRequest.builder()
+				.answers(Map.of(firstQId, test.getQuestions().get(0).getOptions().get(0)))
+				.timeTakenSeconds(60)
 				.build();
 
-		TestResultDto result = testService.submitTest(testDetail.getTestId(), submission);
+		PracticeResultDto result = practiceService.submitPracticeTest(test.getTestId(), submitReq);
 		assertNotNull(result);
-		assertEquals("att_test_123", result.getAttemptId());
-		assertTrue(result.getTotalQuestions() > 0);
-		assertNotNull(result.getFeedbackMessage());
+		assertEquals(5, result.getTotalQuestions());
 		assertNotNull(result.getQuestions());
 		assertNotNull(result.getQuestions().get(0).getCorrectAnswer());
 		assertNotNull(result.getQuestions().get(0).getExplanation());

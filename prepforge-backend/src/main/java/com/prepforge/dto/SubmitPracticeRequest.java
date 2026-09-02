@@ -5,13 +5,14 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.Map;
+
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class SubTopicDto {
-    private String id;
-    private String name;
-    private String description;
-    private int estimatedQuestionCount;
+public class SubmitPracticeRequest {
+
+    private Map<String, String> answers;
+    private int timeTakenSeconds;
 }

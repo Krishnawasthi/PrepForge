@@ -1,134 +1,69 @@
-import { ApiResponse, HealthStatus } from "@/types/api";
-import { Topic } from "@/types/topic";
-import { PromptInterpretation, TestConfig, TestDetail, TestResult, TestSubmission, Question } from "@/types/test";
-import { getAnonymousSessionId, getCustomApiKey } from "./session";
+import { ApiResponse } from "@/types/api";
+import {
+  CreatePracticePayload,
+  PracticeResult,
+  PracticeTest,
+  Question,
+  SubmitPracticePayload,
+} from "@/types/practice";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
-  const sessionId = getAnonymousSessionId();
-  const customApiKey = getCustomApiKey();
-  const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
 
-  const defaultHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "X-Session-Id": sessionId,
-  };
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
+  });
 
-  if (customApiKey) {
-    defaultHeaders["X-Gemini-Key"] = customApiKey;
+  if (!response.ok) {
+    let errorMsg = `API request failed: ${response.status} ${response.statusText}`;
+    try {
+      const errJson = await response.json();
+      if (errJson?.message) errorMsg = errJson.message;
+    } catch (_) {}
+    throw new Error(errorMsg);
   }
 
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-      next: { revalidate: 0 },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      throw new Error(
-        errorData?.message || `API request failed with status: ${response.status} ${response.statusText}`
-      );
-    }
-
-    return await response.json();
-  } catch (error: unknown) {
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error("An unexpected network error occurred while communicating with PrepForge backend.");
-  }
+  return await response.json();
 }
 
-export const prepforgeApi = {
-  // System Health
-  getHealth: () => fetchApi<HealthStatus>("/api/health"),
+export const practiceApi = {
+  getTopics: () => fetchApi<string[]>("/api/topics"),
 
-  // Topics Catalog
-  getTopics: (category?: string) => {
-    const query = category ? `?category=${encodeURIComponent(category)}` : "";
-    return fetchApi<Topic[]>(`/api/topics${query}`);
-  },
-
-  getTopicBySlug: (slug: string) => fetchApi<Topic>(`/api/topics/${slug}`),
-
-  // Test Builder & Interpretation
-  interpretPrompt: (prompt: string) =>
-    fetchApi<PromptInterpretation>("/api/tests/interpret", {
+  createTest: (payload: CreatePracticePayload) =>
+    fetchApi<PracticeTest>("/api/tests", {
       method: "POST",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(payload),
     }),
 
-  validateTestConfig: (config: TestConfig) =>
-    fetchApi<{ testId: string }>("/api/tests/validate", {
-      method: "POST",
-      body: JSON.stringify({
-        ...config,
-        anonymousSessionId: getAnonymousSessionId(),
-      }),
-    }),
+  getTest: (testId: string) => fetchApi<PracticeTest>(`/api/tests/${testId}`),
 
-  // Test Execution
-  generateTest: (config: TestConfig) =>
-    fetchApi<TestDetail>("/api/tests/generate", {
-      method: "POST",
-      body: JSON.stringify({
-        ...config,
-        anonymousSessionId: getAnonymousSessionId(),
-      }),
-    }),
-
-  getTestDetail: (testId: string) =>
-    fetchApi<TestDetail>(`/api/tests/${testId}`),
-
-  replaceQuestion: (
+  changeQuestion: (
     testId: string,
     questionId: string,
-    request?: {
+    context?: {
       topic?: string;
-      subTopic?: string;
-      concept?: string;
       difficulty?: string;
       experienceLevel?: string;
-      questionType?: string;
       previouslyUsedQuestions?: string[];
     }
   ) =>
-    fetchApi<Question>(`/api/tests/${testId}/questions/${questionId}/replace`, {
+    fetchApi<Question>(`/api/tests/${testId}/questions/${questionId}/change`, {
       method: "POST",
-      body: JSON.stringify({
-        ...request,
-        anonymousSessionId: getAnonymousSessionId(),
-      }),
+      body: JSON.stringify(context || {}),
     }),
 
-  // Test Submission & Results
-  submitTest: (testId: string, submission: TestSubmission) =>
-    fetchApi<TestResult>(`/api/tests/${testId}/submit`, {
+  submitTest: (testId: string, payload: SubmitPracticePayload) =>
+    fetchApi<PracticeResult>(`/api/tests/${testId}/submit`, {
       method: "POST",
-      body: JSON.stringify({
-        ...submission,
-        anonymousSessionId: getAnonymousSessionId(),
-      }),
+      body: JSON.stringify(payload),
     }),
 
-  getAttemptResult: (attemptId: string) =>
-    fetchApi<TestResult>(`/api/attempts/${attemptId}`),
-
-  // Weak Area Focus Generation
-  generateWeakAreaPractice: (weakTopics: string[], questionCount: number = 10) =>
-    fetchApi<TestDetail>("/api/tests/weak-area-practice", {
-      method: "POST",
-      body: JSON.stringify({
-        anonymousSessionId: getAnonymousSessionId(),
-        weakTopics,
-        questionCount,
-      }),
-    }),
+  getAttempt: (attemptId: string) => fetchApi<PracticeResult>(`/api/attempts/${attemptId}`),
 };

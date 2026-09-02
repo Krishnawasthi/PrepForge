@@ -11,14 +11,10 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class QuestionReplaceRequest {
+public class QuestionChangeRequest {
 
-    private String anonymousSessionId;
     private String topic;
-    private String subTopic;
-    private String concept;
     private String difficulty;
     private String experienceLevel;
-    private String questionType;
     private List<String> previouslyUsedQuestions;
 }

@@ -2,106 +2,107 @@
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { prepforgeApi } from "@/lib/api-client";
-import { TestDetail } from "@/types/test";
-import { TestHeader } from "@/components/test/TestHeader";
-import { QuestionCard } from "@/components/test/QuestionCard";
-import { QuestionNavigator } from "@/components/test/QuestionNavigator";
-import { SubmissionConfirmModal } from "@/components/test/SubmissionConfirmModal";
-import { LoadingExperience } from "@/components/builder/LoadingExperience";
-import { saveAttemptToLocalHistory } from "@/lib/history";
-import { getAnonymousSessionId } from "@/lib/session";
-import { AlertCircle, Keyboard } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { practiceApi } from "@/lib/api-client";
+import { PracticeTest, Question } from "@/types/practice";
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  RefreshCw, 
+  CheckCircle, 
+  Clock, 
+  AlertCircle,
+  RotateCcw,
+  Check
+} from "lucide-react";
 
-export default function TakeTestPage() {
+export default function PracticeTestPage() {
   const params = useParams();
   const router = useRouter();
   const testId = params.testId as string;
 
-  const [testDetail, setTestDetail] = useState<TestDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [test, setTest] = useState<PracticeTest | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Examination State
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [markedForReview, setMarkedForReview] = useState<Set<number>>(new Set());
-  const [showSubmitModal, setShowSubmitModal] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isChangingQuestion, setIsChangingQuestion] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isChangingQuestion, setIsChangingQuestion] = useState<boolean>(false);
   const [changeError, setChangeError] = useState<string | null>(null);
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
-  // Time tracking and question fingerprinting
+  // Time tracking
   const startTimeRef = useRef<number>(Date.now());
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(1200);
   const isSubmittedRef = useRef<boolean>(false);
   const usedQuestionsRef = useRef<Set<string>>(new Set());
 
-  // Initialize used questions when test loads
+  // Load test
   useEffect(() => {
-    if (testDetail?.questions) {
-      testDetail.questions.forEach((q) => {
-        if (q?.question) usedQuestionsRef.current.add(q.question.trim());
-      });
-    }
-  }, [testDetail]);
-
-  // Fetch test details on mount
-  useEffect(() => {
-    async function loadTest() {
+    async function load() {
       if (!testId) return;
       try {
         setLoading(true);
-        const res = await prepforgeApi.getTestDetail(testId);
-        if (res.success) {
-          setTestDetail(res.data);
+        const res = await practiceApi.getTest(testId);
+        if (res.success && res.data) {
+          setTest(res.data);
           startTimeRef.current = Date.now();
+          setSecondsRemaining((res.data.timeLimitMinutes || 20) * 60);
+          res.data.questions.forEach((q) => {
+            if (q.question) usedQuestionsRef.current.add(q.question.trim());
+          });
         } else {
-          setError(res.message || "Unable to load test questions.");
+          setError(res.message || "Unable to load practice questions.");
         }
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Error connecting to test engine.");
+        setError(err instanceof Error ? err.message : "Error connecting to practice server.");
       } finally {
         setLoading(false);
       }
     }
-    loadTest();
+    load();
   }, [testId]);
 
-  const handleSelectAnswer = useCallback((answer: string) => {
-    if (!testDetail) return;
-    const currentQ = testDetail.questions[currentIndex];
+  // Countdown timer
+  useEffect(() => {
+    if (loading || isSubmittedRef.current || secondsRemaining <= 0) return;
+    const interval = setInterval(() => {
+      setSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleSubmitTest();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [loading, secondsRemaining]);
+
+  const handleSelectAnswer = (option: string) => {
+    if (!test) return;
+    const currentQ = test.questions[currentIndex];
+    if (!currentQ) return;
     setAnswers((prev) => ({
       ...prev,
-      [currentQ.id]: answer,
+      [currentQ.id]: option,
     }));
-  }, [testDetail, currentIndex]);
+  };
 
-  const handleClearAnswer = useCallback(() => {
-    if (!testDetail) return;
-    const currentQ = testDetail.questions[currentIndex];
+  const handleClearAnswer = () => {
+    if (!test) return;
+    const currentQ = test.questions[currentIndex];
+    if (!currentQ) return;
     setAnswers((prev) => {
       const next = { ...prev };
       delete next[currentQ.id];
       return next;
     });
-  }, [testDetail, currentIndex]);
+  };
 
-  const handleToggleMarkReview = useCallback(() => {
-    setMarkedForReview((prev) => {
-      const next = new Set(prev);
-      if (next.has(currentIndex)) {
-        next.delete(currentIndex);
-      } else {
-        next.add(currentIndex);
-      }
-      return next;
-    });
-  }, [currentIndex]);
-
-  const handleChangeQuestion = useCallback(async () => {
-    if (!testDetail || isChangingQuestion) return;
-    const currentQ = testDetail.questions[currentIndex];
+  const handleChangeQuestion = async () => {
+    if (!test || isChangingQuestion) return;
+    const currentQ = test.questions[currentIndex];
     if (!currentQ) return;
 
     setChangeError(null);
@@ -109,12 +110,10 @@ export default function TakeTestPage() {
 
     try {
       const previouslyUsed = Array.from(usedQuestionsRef.current);
-      const res = await prepforgeApi.replaceQuestion(testId, currentQ.id, {
+      const res = await practiceApi.changeQuestion(testId, currentQ.id, {
         topic: currentQ.topic,
-        subTopic: currentQ.subTopic,
         difficulty: currentQ.difficulty,
-        experienceLevel: currentQ.experienceLevel,
-        questionType: currentQ.questionType,
+        experienceLevel: test.experienceLevel,
         previouslyUsedQuestions: previouslyUsed,
       });
 
@@ -124,231 +123,302 @@ export default function TakeTestPage() {
           usedQuestionsRef.current.add(replacement.question.trim());
         }
 
-        // Update question in-place at currentIndex without changing question count
-        setTestDetail((prev) => {
+        // Update in-place at currentIndex without changing question count
+        setTest((prev) => {
           if (!prev) return prev;
           const updated = [...prev.questions];
           updated[currentIndex] = replacement;
-          return {
-            ...prev,
-            questions: updated,
-          };
+          return { ...prev, questions: updated };
         });
 
-        // Reset the answer for this question slot so candidate can answer fresh
+        // Reset the answer for this question slot
         setAnswers((prev) => {
           const next = { ...prev };
           delete next[currentQ.id];
           return next;
         });
       } else {
-        setChangeError(res.message || "We couldn't generate a new question right now. Please try again.");
+        setChangeError(res.message || "Could not generate a new question right now. Please try again.");
       }
     } catch (err: unknown) {
-      setChangeError(
-        err instanceof Error ? err.message : "We couldn't generate a new question right now. Please try again."
-      );
+      setChangeError(err instanceof Error ? err.message : "Could not change question. Please try again.");
     } finally {
       setIsChangingQuestion(false);
     }
-  }, [testDetail, currentIndex, isChangingQuestion, testId]);
+  };
 
-  const handleSubmit = useCallback(async () => {
-    if (isSubmittedRef.current || isSubmitting || !testDetail) return;
-
+  const handleSubmitTest = useCallback(async () => {
+    if (isSubmittedRef.current || isSubmitting || !test) return;
     isSubmittedRef.current = true;
     setIsSubmitting(true);
     setShowSubmitModal(false);
 
     const timeTakenSeconds = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
-    const attemptId = `att_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
     try {
-      const res = await prepforgeApi.submitTest(testId, {
-        anonymousSessionId: getAnonymousSessionId(),
-        attemptId,
+      const res = await practiceApi.submitTest(testId, {
         answers,
         timeTakenSeconds,
       });
 
-      if (res.success) {
-        // Save to anonymous local history (Requirement #35 & #36)
-        saveAttemptToLocalHistory({
-          attemptId: res.data.attemptId,
-          testId: res.data.testId,
-          testTitle: res.data.testTitle,
-          score: res.data.score,
-          totalQuestions: res.data.totalQuestions,
-          percentage: res.data.percentage,
-          timeTakenSeconds: res.data.timeTakenSeconds,
-          completedAt: res.data.completedAt,
-          weakAreas: res.data.weakAreas || [],
-          strongAreas: res.data.strongAreas || [],
-        });
-
-        // Redirect to result page
+      if (res.success && res.data?.attemptId) {
         router.push(`/result/${res.data.attemptId}`);
       } else {
-        setError(res.message || "Failed to calculate test score.");
+        setError(res.message || "Failed to submit test.");
         setIsSubmitting(false);
         isSubmittedRef.current = false;
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error submitting test result.");
+      setError(err instanceof Error ? err.message : "Error submitting practice test.");
       setIsSubmitting(false);
       isSubmittedRef.current = false;
     }
-  }, [isSubmitting, testDetail, testId, answers, router]);
+  }, [test, isSubmitting, testId, answers, router]);
 
-  // Keyboard Shortcuts (A, B, C, D, 1, 2, 3, 4, ArrowLeft, ArrowRight, M)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!testDetail || showSubmitModal) return;
-      // Do not trigger if user is in an input or textarea
-      if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
-
-      const q = testDetail.questions[currentIndex];
-      if (!q) return;
-
-      const key = e.key.toUpperCase();
-
-      if (key === "A" || key === "1") {
-        if (q.options[0]) handleSelectAnswer(q.options[0]);
-      } else if (key === "B" || key === "2") {
-        if (q.options[1]) handleSelectAnswer(q.options[1]);
-      } else if (key === "C" || key === "3") {
-        if (q.options[2]) handleSelectAnswer(q.options[2]);
-      } else if (key === "D" || key === "4") {
-        if (q.options[3]) handleSelectAnswer(q.options[3]);
-      } else if (key === "M") {
-        handleToggleMarkReview();
-      } else if (key === "ARROWLEFT") {
-        setCurrentIndex((prev) => Math.max(0, prev - 1));
-      } else if (key === "ARROWRIGHT") {
-        setCurrentIndex((prev) => Math.min(testDetail.questions.length - 1, prev + 1));
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [testDetail, currentIndex, showSubmitModal, handleSelectAnswer, handleToggleMarkReview]);
+  const formatTimer = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
 
   if (loading) {
     return (
-      <div className="py-20">
-        <LoadingExperience title="Initializing Assessment Environment" />
-      </div>
-    );
-  }
-
-  if (error || !testDetail) {
-    return (
-      <div className="max-w-md mx-auto my-20 p-8 bg-white rounded-2xl border border-slate-200 shadow-md text-center space-y-4">
-        <div className="h-12 w-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
-          <AlertCircle className="h-6 w-6" />
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="text-center space-y-3">
+          <RefreshCw className="h-8 w-8 text-indigo-600 animate-spin mx-auto" />
+          <p className="text-sm font-semibold text-slate-700">Loading your practice test...</p>
         </div>
-        <h3 className="text-lg font-bold text-slate-900">Assessment Error</h3>
-        <p className="text-xs text-slate-600">{error || "Test could not be loaded."}</p>
-        <Button variant="primary" size="sm" onClick={() => router.push("/create")}>
-          Create New Assessment
-        </Button>
       </div>
     );
   }
 
-  const currentQuestion = testDetail.questions[currentIndex];
-  const questionIds = testDetail.questions.map((q) => q.id);
+  if (error || !test) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full text-center space-y-4 shadow-sm">
+          <AlertCircle className="h-10 w-10 text-rose-600 mx-auto" />
+          <h2 className="text-base font-bold text-slate-900">Unable to Open Practice</h2>
+          <p className="text-xs text-slate-600">{error || "Test not found."}</p>
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors"
+          >
+            Back to Practice Setup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const currentQ = test.questions[currentIndex];
+  const total = test.questions.length;
   const answeredCount = Object.keys(answers).filter((k) => answers[k] && answers[k].trim()).length;
-  const unansweredCount = testDetail.questions.length - answeredCount;
+  const isLastQuestion = currentIndex === total - 1;
+  const optionLetters = ["A", "B", "C", "D"];
 
   return (
-    <div className="min-h-screen bg-slate-50/60 pb-16">
-      {/* Top Fixed Header with Timer */}
-      <TestHeader
-        title={testDetail.title}
-        currentIndex={currentIndex}
-        totalQuestions={testDetail.questions.length}
-        timeLimitMinutes={testDetail.timeLimitMinutes}
-        onTimeExpire={handleSubmit}
-        onSubmitClick={() => setShowSubmitModal(true)}
-        isSubmitting={isSubmitting}
-      />
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col justify-between">
+      {/* Top Test Header with Timer & Progress */}
+      <header className="border-b border-slate-200 bg-white sticky top-0 z-20 shadow-2xs">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
+              Question {currentIndex + 1} of {total}
+            </span>
+            <span className="text-xs text-slate-500 font-medium hidden sm:inline">
+              ({answeredCount} of {total} answered)
+            </span>
+          </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-          {/* Main Question Card (3 cols) */}
-          <div className="lg:col-span-3 space-y-3">
-            {changeError && (
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs shadow-xs animate-in fade-in">
-                <span>{changeError}</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg">
+              <Clock className="h-3.5 w-3.5 text-indigo-600" />
+              <span>{formatTimer(secondsRemaining)}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowSubmitModal(true)}
+              className="text-xs font-bold px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition-colors"
+            >
+              Submit Test
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Question Card Container */}
+      <main className="max-w-3xl w-full mx-auto px-4 sm:px-6 py-8">
+        {changeError && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center justify-between">
+            <span>{changeError}</span>
+            <button
+              type="button"
+              onClick={() => setChangeError(null)}
+              className="font-bold text-amber-700 hover:text-amber-900 ml-2"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {currentQ && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-xs space-y-6">
+            {/* Question Meta */}
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-md">
+                {currentQ.topic}
+              </span>
+              {currentQ.difficulty && (
+                <span className="text-[11px] font-semibold text-slate-500">
+                  {currentQ.difficulty}
+                </span>
+              )}
+            </div>
+
+            {/* Question Text */}
+            <div className="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed whitespace-pre-line font-sans">
+              {currentQ.question}
+            </div>
+
+            {/* 4 Options */}
+            <div className="space-y-2.5 pt-2">
+              {currentQ.options.map((option, idx) => {
+                const letter = optionLetters[idx] || `${idx + 1}`;
+                const isSelected = answers[currentQ.id] === option;
+                return (
+                  <button
+                    type="button"
+                    key={idx}
+                    onClick={() => handleSelectAnswer(option)}
+                    className={`w-full p-4 rounded-xl border text-left text-xs sm:text-sm font-medium transition-all flex items-start gap-3 ${
+                      isSelected
+                        ? "bg-indigo-50/80 border-indigo-600 text-indigo-950 ring-1 ring-indigo-600 font-semibold shadow-xs"
+                        : "bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50/60"
+                    }`}
+                  >
+                    <div
+                      className={`h-6 w-6 rounded-lg shrink-0 flex items-center justify-center text-xs font-bold border transition-colors ${
+                        isSelected
+                          ? "bg-indigo-600 border-indigo-600 text-white"
+                          : "bg-slate-100 border-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {letter}
+                    </div>
+                    <span className="mt-0.5 leading-relaxed flex-1">{option}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Bottom Controls */}
+            <div className="pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div>
+                {answers[currentQ.id] && (
+                  <button
+                    type="button"
+                    onClick={handleClearAnswer}
+                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-rose-600 font-medium transition-colors"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    <span>Clear Answer</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full sm:w-auto">
                 <button
                   type="button"
-                  onClick={() => setChangeError(null)}
-                  className="font-bold ml-3 text-amber-700 hover:text-amber-900 hover:underline"
+                  onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
+                  disabled={currentIndex === 0 || isChangingQuestion}
+                  className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1"
                 >
-                  Dismiss
+                  <ChevronLeft className="h-4 w-4" />
+                  <span>Previous</span>
                 </button>
-              </div>
-            )}
 
-            {currentQuestion && (
-              <QuestionCard
-                question={currentQuestion}
-                index={currentIndex}
-                total={testDetail.questions.length}
-                selectedAnswer={answers[currentQuestion.id]}
-                onSelectAnswer={handleSelectAnswer}
-                onClearAnswer={handleClearAnswer}
-                isMarkedForReview={markedForReview.has(currentIndex)}
-                onToggleMarkReview={handleToggleMarkReview}
-                onPrevious={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
-                onNext={() => setCurrentIndex((prev) => Math.min(testDetail.questions.length - 1, prev + 1))}
-                onSubmit={() => setShowSubmitModal(true)}
-                onChangeQuestion={handleChangeQuestion}
-                isChangingQuestion={isChangingQuestion}
-                hasPrevious={currentIndex > 0}
-                hasNext={currentIndex < testDetail.questions.length - 1}
-              />
-            )}
+                <button
+                  type="button"
+                  onClick={handleChangeQuestion}
+                  disabled={isChangingQuestion}
+                  title="Replace this question with another question testing the same topic"
+                  className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl border border-amber-200 bg-amber-50/60 text-amber-900 text-xs font-bold hover:bg-amber-100/70 disabled:opacity-60 inline-flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 text-amber-600 ${isChangingQuestion ? "animate-spin" : ""}`} />
+                  <span>{isChangingQuestion ? "Creating..." : "Change Question"}</span>
+                </button>
 
-            {/* Keyboard shortcuts footer hint */}
-            <div className="hidden sm:flex items-center justify-between px-3 py-2 bg-white/60 border border-slate-200/70 rounded-xl text-[11px] text-slate-500">
-              <span className="flex items-center gap-1.5">
-                <Keyboard className="h-3.5 w-3.5 text-indigo-600" />
-                <span>Keyboard Shortcuts:</span>
-              </span>
-              <div className="flex items-center gap-3 font-mono">
-                <span><kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded">A</kbd>-<kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded">D</kbd> Select</span>
-                <span><kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded">←</kbd><kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded">→</kbd> Navigate</span>
-                <span><kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded">M</kbd> Review</span>
+                {isLastQuestion ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowSubmitModal(true)}
+                    disabled={isChangingQuestion}
+                    className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center justify-center gap-1 shadow-xs transition-colors"
+                  >
+                    <span>Submit Test</span>
+                    <CheckCircle className="h-4 w-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentIndex((prev) => Math.min(total - 1, prev + 1))}
+                    disabled={isChangingQuestion}
+                    className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold inline-flex items-center justify-center gap-1 shadow-xs transition-colors"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
-
-          {/* Right Sidebar: Navigator (1 col) */}
-          <div className="lg:col-span-1 space-y-4">
-            <QuestionNavigator
-              totalQuestions={testDetail.questions.length}
-              currentIndex={currentIndex}
-              answers={answers}
-              questionIds={questionIds}
-              markedForReview={markedForReview}
-              onSelectQuestion={(idx) => setCurrentIndex(idx)}
-            />
-          </div>
-        </div>
+        )}
       </main>
 
-      {/* Submission Confirmation Modal */}
-      <SubmissionConfirmModal
-        isOpen={showSubmitModal}
-        onClose={() => setShowSubmitModal(false)}
-        onConfirm={handleSubmit}
-        totalQuestions={testDetail.questions.length}
-        answeredCount={answeredCount}
-        unansweredCount={unansweredCount}
-        isSubmitting={isSubmitting}
-      />
+      {/* Confirmation Modal */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-xl animate-in fade-in">
+            <h3 className="text-base font-bold text-slate-900">Submit Practice Test?</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              You answered <strong className="text-slate-900">{answeredCount}</strong> of <strong className="text-slate-900">{total}</strong> questions.
+              {total - answeredCount > 0 && (
+                <span className="block mt-1 text-amber-700 font-medium">
+                  {total - answeredCount} questions will be scored as skipped.
+                </span>
+              )}
+            </p>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(false)}
+                className="flex-1 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Keep Reviewing
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={handleSubmitTest}
+                className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1"
+              >
+                {isSubmitting ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <span>Submit Now</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Footer */}
+      <footer className="py-4 text-center text-xs text-slate-400">
+        PrepForge Practice Engine
+      </footer>
     </div>
   );
 }

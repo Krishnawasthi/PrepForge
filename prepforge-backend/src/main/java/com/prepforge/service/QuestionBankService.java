@@ -591,13 +591,8 @@ public class QuestionBankService {
                 .options(options)
                 .correctAnswer(correctAnswer)
                 .explanation(explanation)
-                .optionExplanations(optionExplanations)
                 .topic(topic)
-                .subTopic(subTopic)
                 .difficulty(difficulty)
-                .experienceLevel(experienceLevel)
-                .questionType(questionType)
-                .interviewTip(interviewTip)
                 .build();
     }
 }
