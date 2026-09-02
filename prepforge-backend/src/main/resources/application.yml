@@ -1,0 +1,36 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: prepforge-backend
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/prepforge}
+      auto-index-creation: true
+  cache:
+    type: simple
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY:}
+    base-url: https://generativelanguage.googleapis.com
+    model: gemini-3.5-flash-lite
+    timeout-ms: 60000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    com.prepforge: DEBUG
+    org.springframework.data.mongodb: INFO
