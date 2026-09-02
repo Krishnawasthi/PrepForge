@@ -100,11 +100,6 @@ export function TestBuilder({ onTestCreated }: TestBuilderProps) {
 
   // Generate full test and navigate directly to test taking interface
   const handleGenerateAndStart = async () => {
-    if (selectedTopics.length === 0) {
-      setError("Please select at least one technical topic.");
-      return;
-    }
-
     setError(null);
     setGenerating(true);
 
@@ -231,14 +226,6 @@ export function TestBuilder({ onTestCreated }: TestBuilderProps) {
         {/* Mode 2: Manual Guided Customizer */}
         {mode === "manual" && (
           <div className="space-y-8">
-            <TopicSelector
-              topics={topics}
-              selectedTopics={selectedTopics}
-              onChange={setSelectedTopics}
-              selectedSubTopics={selectedSubTopics}
-              onSubTopicsChange={setSelectedSubTopics}
-            />
-
             <ExperienceSelector
               value={experienceLevel}
               onChange={setExperienceLevel}
