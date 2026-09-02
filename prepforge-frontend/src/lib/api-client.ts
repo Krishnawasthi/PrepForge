@@ -1,6 +1,6 @@
 import { ApiResponse, HealthStatus } from "@/types/api";
 import { Topic } from "@/types/topic";
-import { PromptInterpretation, TestConfig, TestDetail, TestResult, TestSubmission } from "@/types/test";
+import { PromptInterpretation, TestConfig, TestDetail, TestResult, TestSubmission, Question } from "@/types/test";
 import { getAnonymousSessionId, getCustomApiKey } from "./session";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -86,6 +86,27 @@ export const prepforgeApi = {
 
   getTestDetail: (testId: string) =>
     fetchApi<TestDetail>(`/api/tests/${testId}`),
+
+  replaceQuestion: (
+    testId: string,
+    questionId: string,
+    request?: {
+      topic?: string;
+      subTopic?: string;
+      concept?: string;
+      difficulty?: string;
+      experienceLevel?: string;
+      questionType?: string;
+      previouslyUsedQuestions?: string[];
+    }
+  ) =>
+    fetchApi<Question>(`/api/tests/${testId}/questions/${questionId}/replace`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...request,
+        anonymousSessionId: getAnonymousSessionId(),
+      }),
+    }),
 
   // Test Submission & Results
   submitTest: (testId: string, submission: TestSubmission) =>

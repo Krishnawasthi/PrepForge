@@ -29,10 +29,22 @@ export default function TakeTestPage() {
   const [markedForReview, setMarkedForReview] = useState<Set<number>>(new Set());
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isChangingQuestion, setIsChangingQuestion] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
 
-  // Time tracking
+  // Time tracking and question fingerprinting
   const startTimeRef = useRef<number>(Date.now());
   const isSubmittedRef = useRef<boolean>(false);
+  const usedQuestionsRef = useRef<Set<string>>(new Set());
+
+  // Initialize used questions when test loads
+  useEffect(() => {
+    if (testDetail?.questions) {
+      testDetail.questions.forEach((q) => {
+        if (q?.question) usedQuestionsRef.current.add(q.question.trim());
+      });
+    }
+  }, [testDetail]);
 
   // Fetch test details on mount
   useEffect(() => {
@@ -86,6 +98,60 @@ export default function TakeTestPage() {
       return next;
     });
   }, [currentIndex]);
+
+  const handleChangeQuestion = useCallback(async () => {
+    if (!testDetail || isChangingQuestion) return;
+    const currentQ = testDetail.questions[currentIndex];
+    if (!currentQ) return;
+
+    setChangeError(null);
+    setIsChangingQuestion(true);
+
+    try {
+      const previouslyUsed = Array.from(usedQuestionsRef.current);
+      const res = await prepforgeApi.replaceQuestion(testId, currentQ.id, {
+        topic: currentQ.topic,
+        subTopic: currentQ.subTopic,
+        difficulty: currentQ.difficulty,
+        experienceLevel: currentQ.experienceLevel,
+        questionType: currentQ.questionType,
+        previouslyUsedQuestions: previouslyUsed,
+      });
+
+      if (res.success && res.data) {
+        const replacement = res.data;
+        if (replacement.question) {
+          usedQuestionsRef.current.add(replacement.question.trim());
+        }
+
+        // Update question in-place at currentIndex without changing question count
+        setTestDetail((prev) => {
+          if (!prev) return prev;
+          const updated = [...prev.questions];
+          updated[currentIndex] = replacement;
+          return {
+            ...prev,
+            questions: updated,
+          };
+        });
+
+        // Reset the answer for this question slot so candidate can answer fresh
+        setAnswers((prev) => {
+          const next = { ...prev };
+          delete next[currentQ.id];
+          return next;
+        });
+      } else {
+        setChangeError(res.message || "We couldn't generate a new question right now. Please try again.");
+      }
+    } catch (err: unknown) {
+      setChangeError(
+        err instanceof Error ? err.message : "We couldn't generate a new question right now. Please try again."
+      );
+    } finally {
+      setIsChangingQuestion(false);
+    }
+  }, [testDetail, currentIndex, isChangingQuestion, testId]);
 
   const handleSubmit = useCallback(async () => {
     if (isSubmittedRef.current || isSubmitting || !testDetail) return;
@@ -212,6 +278,19 @@ export default function TakeTestPage() {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           {/* Main Question Card (3 cols) */}
           <div className="lg:col-span-3 space-y-3">
+            {changeError && (
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs shadow-xs animate-in fade-in">
+                <span>{changeError}</span>
+                <button
+                  type="button"
+                  onClick={() => setChangeError(null)}
+                  className="font-bold ml-3 text-amber-700 hover:text-amber-900 hover:underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             {currentQuestion && (
               <QuestionCard
                 question={currentQuestion}
@@ -225,6 +304,8 @@ export default function TakeTestPage() {
                 onPrevious={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
                 onNext={() => setCurrentIndex((prev) => Math.min(testDetail.questions.length - 1, prev + 1))}
                 onSubmit={() => setShowSubmitModal(true)}
+                onChangeQuestion={handleChangeQuestion}
+                isChangingQuestion={isChangingQuestion}
                 hasPrevious={currentIndex > 0}
                 hasNext={currentIndex < testDetail.questions.length - 1}
               />

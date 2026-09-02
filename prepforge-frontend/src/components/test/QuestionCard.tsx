@@ -12,7 +12,8 @@ import {
   Bookmark, 
   BookmarkCheck,
   Tag,
-  CheckCircle
+  CheckCircle,
+  RefreshCw
 } from "lucide-react";
 
 interface QuestionCardProps {
@@ -27,6 +28,8 @@ interface QuestionCardProps {
   onPrevious: () => void;
   onNext: () => void;
   onSubmit?: () => void;
+  onChangeQuestion?: () => void;
+  isChangingQuestion?: boolean;
   hasPrevious: boolean;
   hasNext: boolean;
 }
@@ -43,6 +46,8 @@ export function QuestionCard({
   onPrevious,
   onNext,
   onSubmit,
+  onChangeQuestion,
+  isChangingQuestion = false,
   hasPrevious,
   hasNext,
 }: QuestionCardProps) {
@@ -162,18 +167,35 @@ export function QuestionCard({
             variant="outline"
             size="md"
             onClick={onPrevious}
-            disabled={!hasPrevious}
+            disabled={!hasPrevious || isChangingQuestion}
             className="flex-1 sm:flex-none"
           >
             <ChevronLeft className="h-4 w-4" />
             <span>Previous</span>
           </Button>
 
+          {onChangeQuestion && (
+            <Button
+              variant="outline"
+              size="md"
+              type="button"
+              onClick={onChangeQuestion}
+              disabled={isChangingQuestion}
+              isLoading={isChangingQuestion}
+              title="Get a different question on the same concept"
+              className="flex-1 sm:flex-none border-amber-200 text-amber-900 bg-amber-50/50 hover:bg-amber-100/70 hover:border-amber-300 font-medium transition-colors"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 text-amber-600 ${isChangingQuestion ? 'animate-spin' : ''}`} />
+              <span>{isChangingQuestion ? "Creating a new question..." : "Change Question"}</span>
+            </Button>
+          )}
+
           {hasNext ? (
             <Button
               variant="primary"
               size="md"
               onClick={onNext}
+              disabled={isChangingQuestion}
               className="flex-1 sm:flex-none"
             >
               <span>Next Question</span>

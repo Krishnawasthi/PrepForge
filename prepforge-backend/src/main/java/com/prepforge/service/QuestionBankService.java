@@ -75,6 +75,14 @@ public class QuestionBankService {
         return dynamicList;
     }
 
+    public Question createAlgorithmicOutputQuestion(String topic, String diff, String exp) {
+        return createAlgorithmicOutputQuestion(topic, exp, diff, new Random().nextInt(1000), new Random());
+    }
+
+    public Question createDiverseParametricQuestion(String topic, String diff, String exp) {
+        return createDiverseParametricQuestion(topic, exp, diff, new Random().nextInt(20), new Random());
+    }
+
     private Question createAlgorithmicOutputQuestion(String topic, String exp, String diff, int index, Random random) {
         String uid = "algo_" + System.currentTimeMillis() + "_" + index;
         int a = random.nextInt(2, 9);
