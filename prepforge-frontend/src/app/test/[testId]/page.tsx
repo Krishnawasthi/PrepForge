@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Check
 } from "lucide-react";
+import { FormattedQuestionText } from "@/components/ui/CodeEditorView";
 
 export default function PracticeTestPage() {
   const params = useParams();
@@ -277,9 +278,9 @@ export default function PracticeTestPage() {
               )}
             </div>
 
-            {/* Question Text */}
-            <div className="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed whitespace-pre-line font-sans">
-              {currentQ.question}
+            {/* Question Text with IDE Code Formatter */}
+            <div className="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed font-sans">
+              <FormattedQuestionText text={currentQ.question} />
             </div>
 
             {/* 4 Options */}

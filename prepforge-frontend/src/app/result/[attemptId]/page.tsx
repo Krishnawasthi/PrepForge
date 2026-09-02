@@ -17,6 +17,7 @@ import {
   Check,
   X
 } from "lucide-react";
+import { FormattedQuestionText } from "@/components/ui/CodeEditorView";
 
 export default function PracticeResultPage() {
   const params = useParams();
@@ -327,9 +328,9 @@ export default function PracticeResultPage() {
                     )}
                   </div>
 
-                  {/* Question Statement */}
-                  <div className="text-xs sm:text-sm font-semibold text-slate-900 whitespace-pre-line leading-relaxed">
-                    {q.question}
+                  {/* Question Statement with IDE Code Formatter */}
+                  <div className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed">
+                    <FormattedQuestionText text={q.question} />
                   </div>
 
                   {/* Options with Status */}
@@ -370,7 +371,9 @@ export default function PracticeResultPage() {
                   {q.explanation && (
                     <div className="mt-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
                       <span className="font-bold text-slate-900 block">Explanation:</span>
-                      <p className="text-slate-600 leading-relaxed">{q.explanation}</p>
+                      <div className="text-slate-600 leading-relaxed">
+                        <FormattedQuestionText text={q.explanation} />
+                      </div>
                     </div>
                   )}
                 </div>
