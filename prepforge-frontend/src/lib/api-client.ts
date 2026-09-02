@@ -3,7 +3,7 @@ import { Topic } from "@/types/topic";
 import { PromptInterpretation, TestConfig, TestDetail, TestResult, TestSubmission } from "@/types/test";
 import { getAnonymousSessionId, getCustomApiKey } from "./session";
 
-const API_BASE_URL = typeof window !== "undefined" ? "" : (process.env.BACKEND_API_URL || "http://localhost:8080");
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
   const sessionId = getAnonymousSessionId();

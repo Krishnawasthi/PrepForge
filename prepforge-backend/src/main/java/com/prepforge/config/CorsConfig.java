@@ -28,7 +28,7 @@ public class CorsConfig {
             "https://*.prepforge.app"
         ));
         config.setAllowedHeaders(Arrays.asList(
-            "Origin", "Content-Type", "Accept", "Authorization", "X-Session-Id", "X-Requested-With"
+            "Origin", "Content-Type", "Accept", "Authorization", "X-Session-Id", "X-Gemini-Key", "X-Requested-With", "*"
         ));
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setExposedHeaders(List.of("X-Total-Count", "X-Session-Id", "Retry-After"));
