@@ -55,10 +55,6 @@ public class TestService {
     }
 
     public TestSession validateAndCreateTestSession(TestConfigRequest config) {
-        if (config.getTopics() == null || config.getTopics().isEmpty()) {
-            throw new AppException("At least one topic must be selected");
-        }
-
         String testId = "test_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         String anonId = config.getAnonymousSessionId() != null && !config.getAnonymousSessionId().isBlank()
                 ? config.getAnonymousSessionId()
