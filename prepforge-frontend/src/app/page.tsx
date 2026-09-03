@@ -15,19 +15,25 @@ import {
 
 const DEFAULT_TOPICS = [
   "Core Java",
-  "Object-Oriented Programming (OOP)",
-  "Java Collections Framework",
+  "Data Types & Variables",
+  "Operators",
+  "Classes & Objects",
+  "Constructors",
+  "OOP",
+  "Access Modifiers",
+  "String Handling",
+  "Wrapper Classes",
+  "Arrays",
   "Exception Handling",
-  "Java 8 & Modern Java",
-  "Streams API",
-  "Multithreading & Concurrency",
-  "JVM Internals & Memory",
-  "Strings & Immutability",
+  "Collections",
   "Generics",
+  "Java 8 / Functional Programming",
+  "Multithreading",
+  "static & final",
+  "Object Class",
   "Interfaces & Abstract Classes",
-  "Inheritance & Polymorphism",
-  "Constructors & Object Lifecycle",
-  "Encapsulation & Access Modifiers"
+  "Inner Classes",
+  "Memory & JVM Concepts"
 ];
 
 const EXPERIENCE_OPTIONS: { id: ExperienceLevel; label: string; desc: string }[] = [
@@ -44,9 +50,11 @@ export default function HomePage() {
   const [topics, setTopics] = useState<string[]>(DEFAULT_TOPICS);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([
     "Core Java",
-    "Object-Oriented Programming (OOP)",
-    "Java Collections Framework",
-    "Streams API",
+    "OOP",
+    "Collections",
+    "Exception Handling",
+    "Java 8 / Functional Programming",
+    "Multithreading"
   ]);
   const [experience, setExperience] = useState<ExperienceLevel>("Intermediate");
   const [questionCount, setQuestionCount] = useState<number>(10);

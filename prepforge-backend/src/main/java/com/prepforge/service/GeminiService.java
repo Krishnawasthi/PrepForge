@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.prepforge.entity.Question;
+import com.prepforge.model.JavaTopics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -104,6 +105,9 @@ public class GeminiService {
             int codeReviewCount = (int) Math.round(count * 0.45);
             int conceptualCount = count - codeReviewCount;
 
+            // Build subtopic taxonomy block for each selected topic
+            String subtopicBlock = JavaTopics.getSubtopicPromptBlock(topics);
+
             String prompt = String.format(
                     "You are a Senior Java Technical Interviewer.\n" +
                     "Generate EXACTLY %d high-yield Java interview practice questions for a candidate with '%s' experience.\n\n" +
@@ -111,15 +115,22 @@ public class GeminiService {
                     "- EVERY single question MUST strictly test only these chosen topics: [%s].\n" +
                     "- ABSOLUTELY DO NOT generate questions on any other topic.\n" +
                     "- The 'topic' field in each JSON object MUST be chosen strictly from: [%s].\n\n" +
+                    "SUBTOPIC COVERAGE (MANDATORY):\n" +
+                    "Each topic has specific subtopics/concepts. You MUST spread questions across as many different subtopics as possible.\n" +
+                    "DO NOT repeat the same subtopic. DO NOT ask generic surface-level questions like 'What is inheritance?'.\n" +
+                    "Instead, ask deep, specific questions testing individual subtopics.\n\n" +
+                    "Topic → Subtopics:\n%s\n" +
+                    "Spread questions evenly across these subtopics. Each question should test a DIFFERENT subtopic/concept.\n\n" +
                     "CODE REVIEW & OUTPUT PREDICTION REQUIREMENT (MANDATORY):\n" +
                     "- Exactly %d questions MUST be Code Review / Output Prediction questions.\n" +
                     "  * E.g. 'What is the output of the following Java code snippet?', 'What will be printed when this code is executed?', 'Does this code compile or throw an exception at runtime?'.\n" +
                     "  * Every code review question MUST include a complete, valid Java code block enclosed in ```java\\n...\\n```.\n" +
-                    "- The remaining %d questions should be deep practical or conceptual interview scenarios on the selected topics.\n\n" +
+                    "- The remaining %d questions should be deep practical or conceptual interview scenarios on the selected subtopics.\n\n" +
                     "QUESTION RULES:\n" +
                     "- Exactly 4 distinct options (A, B, C, D) per question.\n" +
                     "- Exactly 1 unambiguous correct answer that matches an option word-for-word.\n" +
-                    "- Clear technical explanation.\n\n" +
+                    "- Clear technical explanation.\n" +
+                    "- NEVER repeat a question. Every question must test a different concept.\n\n" +
                     "RETURN FORMAT:\n" +
                     "Return ONLY a valid JSON array of objects with these keys:\n" +
                     "[\n" +
@@ -132,7 +143,9 @@ public class GeminiService {
                     "    \"difficulty\": \"Medium\"\n" +
                     "  }\n" +
                     "]",
-                    count, experienceLevel, topicList, topicList, codeReviewCount, conceptualCount, topics.get(0)
+                    count, experienceLevel, topicList, topicList,
+                    subtopicBlock,
+                    codeReviewCount, conceptualCount, topics.get(0)
             );
 
             try {
@@ -186,19 +199,28 @@ public class GeminiService {
                 }
             }
 
+            // Get subtopics for the topic to guide replacement question diversity
+            List<String> subtopics = JavaTopics.getSubtopics(topic);
+            String subtopicHint = subtopics.isEmpty() ? "" :
+                    "Available subtopics for '" + topic + "': " + String.join(", ", subtopics) +
+                    "\nPick a subtopic that was NOT already tested in the previous questions.\n\n";
+
             String prompt = String.format(
                     "You are an expert Java interviewer.\n" +
                     "Generate a COMPLETELY NEW Java interview question testing STRICTLY the topic: '%s'.\n" +
                     "Experience level: %s.\n" +
+                    "%s" +
                     "Can be either a conceptual question or a code output question ('What is the output of the following Java code snippet?' with ```java...```).\n\n" +
-                    "%s\n" +
+                    "%s" +
                     "REQUIREMENTS:\n" +
                     "- Strictly on topic '%s'. Do not switch topics.\n" +
+                    "- Test a DIFFERENT subtopic/concept than what was previously asked.\n" +
                     "- Exactly 4 options.\n" +
                     "- Exactly 1 correct answer.\n" +
                     "- Clear technical explanation.\n" +
                     "- Return a SINGLE JSON object with keys: question, options, correctAnswer, explanation, topic, difficulty.",
                     topic, experienceLevel != null ? experienceLevel : "Intermediate",
+                    subtopicHint,
                     usedBuilder.toString(), topic
             );
 
