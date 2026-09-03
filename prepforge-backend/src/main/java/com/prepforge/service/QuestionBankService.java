@@ -1,7 +1,6 @@
 package com.prepforge.service;
 
 import com.prepforge.entity.Question;
-import com.prepforge.repository.QuestionRepository;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,25 +13,18 @@ import java.util.concurrent.ThreadLocalRandom;
 public class QuestionBankService {
 
     private static final Logger log = LoggerFactory.getLogger(QuestionBankService.class);
-    private final QuestionRepository questionRepository;
     private List<Question> curatedBankCache = new ArrayList<>();
 
-    public QuestionBankService(QuestionRepository questionRepository) {
-        this.questionRepository = questionRepository;
+    public QuestionBankService() {
+        this.curatedBankCache = getCuratedQuestionBank();
     }
 
     @PostConstruct
     public void seedInitialQuestions() {
-        try {
-            log.info("Refreshing pure Java interview question bank in database...");
-            curatedBankCache = getCuratedQuestionBank();
-            questionRepository.deleteAll();
-            questionRepository.saveAll(curatedBankCache);
-            log.info("Successfully seeded {} curated pure Java questions.", curatedBankCache.size());
-        } catch (Exception e) {
-            log.warn("Question bank database seeding skipped (using in-memory bank): {}", e.getMessage());
+        if (curatedBankCache == null || curatedBankCache.isEmpty()) {
             curatedBankCache = getCuratedQuestionBank();
         }
+        log.info("Initialized {} curated pure Java questions in memory.", curatedBankCache.size());
     }
 
     /**

@@ -6,10 +6,6 @@ server:
 spring:
   application:
     name: prepforge-backend
-  data:
-    mongodb:
-      uri: ${MONGODB_URI:mongodb://localhost:27017/prepforge}
-      auto-index-creation: true
   cache:
     type: simple
 

@@ -7,9 +7,6 @@ import com.prepforge.entity.TestSession;
 import com.prepforge.exception.AppException;
 import com.prepforge.exception.ResourceNotFoundException;
 import com.prepforge.model.JavaTopics;
-import com.prepforge.repository.QuestionRepository;
-import com.prepforge.repository.TestAttemptRepository;
-import com.prepforge.repository.TestRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,26 +23,17 @@ public class PracticeService {
 
     private final GeminiService geminiService;
     private final QuestionBankService questionBankService;
-    private final TestRepository testRepository;
-    private final QuestionRepository questionRepository;
-    private final TestAttemptRepository attemptRepository;
 
-    // Fast in-memory cache
+    // Fast, self-contained in-memory cache
     private final Map<String, TestSession> sessionCache = new ConcurrentHashMap<>();
     private final Map<String, Question> questionCache = new ConcurrentHashMap<>();
     private final Map<String, TestAttempt> attemptCache = new ConcurrentHashMap<>();
 
     public PracticeService(
             GeminiService geminiService,
-            QuestionBankService questionBankService,
-            TestRepository testRepository,
-            QuestionRepository questionRepository,
-            TestAttemptRepository attemptRepository) {
+            QuestionBankService questionBankService) {
         this.geminiService = geminiService;
         this.questionBankService = questionBankService;
-        this.testRepository = testRepository;
-        this.questionRepository = questionRepository;
-        this.attemptRepository = attemptRepository;
     }
 
     public List<String> getTopics() {
@@ -108,13 +96,10 @@ public class PracticeService {
             if (seed > 200) break;
         }
 
-        // Cache & persist questions
+        // Cache questions
         for (Question q : collected) {
             questionCache.put(q.getId(), q);
         }
-        try {
-            questionRepository.saveAll(collected);
-        } catch (Exception ignored) {}
 
         List<String> qIds = collected.stream().map(Question::getId).collect(Collectors.toList());
 
@@ -128,9 +113,6 @@ public class PracticeService {
                 .build();
 
         sessionCache.put(testId, session);
-        try {
-            testRepository.save(session);
-        } catch (Exception ignored) {}
 
         List<QuestionDto> dtos = collected.stream()
                 .map(q -> mapToDto(q, false))
@@ -207,9 +189,6 @@ public class PracticeService {
         }
 
         questionCache.put(replacement.getId(), replacement);
-        try {
-            questionRepository.save(replacement);
-        } catch (Exception ignored) {}
 
         // Replace questionId in session without changing question count
         int idx = session.getQuestionIds().indexOf(questionId);
@@ -220,9 +199,6 @@ public class PracticeService {
         }
 
         sessionCache.put(testId, session);
-        try {
-            testRepository.save(session);
-        } catch (Exception ignored) {}
 
         return mapToDto(replacement, false);
     }
@@ -299,9 +275,6 @@ public class PracticeService {
                 .build();
 
         attemptCache.put(attemptId, attempt);
-        try {
-            attemptRepository.save(attempt);
-        } catch (Exception ignored) {}
 
         return PracticeResultDto.builder()
                 .attemptId(attemptId)
@@ -324,8 +297,7 @@ public class PracticeService {
     public PracticeResultDto getAttemptResult(String attemptId) {
         TestAttempt attempt = attemptCache.get(attemptId);
         if (attempt == null) {
-            attempt = attemptRepository.findByAttemptId(attemptId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Result attempt not found: " + attemptId));
+            throw new ResourceNotFoundException("Result attempt not found: " + attemptId);
         }
 
         TestSession session = getSession(attempt.getTestId());
@@ -335,7 +307,7 @@ public class PracticeService {
                 Question q = getQuestionById(qId);
                 if (q != null) {
                     String userAns = attempt.getUserAnswers() != null ? attempt.getUserAnswers().get(q.getId()) : null;
-                    boolean isSkipped = (userAns == null || userAns.isBlank());
+                    boolean isSkipped = userAns == null || userAns.isBlank();
                     boolean isCorrect = !isSkipped && userAns.trim().equalsIgnoreCase(q.getCorrectAnswer().trim());
 
                     QuestionDto dto = mapToDto(q, true);
@@ -370,13 +342,13 @@ public class PracticeService {
         for (String topic : weakTopics) {
             String t = topic.toLowerCase();
             if (t.contains("collection")) {
-                tips.add("Collections: Review HashMap bucket collision handling, ArrayList vs LinkedList trade-offs, and Fail-Fast vs Fail-Safe iterators.");
-            } else if (t.contains("stream")) {
-                tips.add("Streams API: Practice intermediate vs terminal operations, flatMap() transformations, and custom Collectors.");
+                tips.add("Collections: Review HashMap collision chaining, Iterator remove() vs for-each, and ConcurrentHashMap bucket CAS locking.");
+            } else if (t.contains("stream") || t.contains("java 8") || t.contains("functional")) {
+                tips.add("Streams & Java 8: Master intermediate vs terminal operations, flatMap() flattening, and lazy evaluation.");
             } else if (t.contains("thread") || t.contains("concurrency")) {
-                tips.add("Multithreading: Brush up on volatile visibility, ReentrantLock tryLock(), and thread pool executor sizing.");
+                tips.add("Multithreading: Review volatile memory barriers, AtomicInteger CAS operations, and ThreadPoolExecutor saturation policies.");
             } else if (t.contains("exception")) {
-                tips.add("Exception Handling: Revise Checked vs Unchecked hierarchy, try-with-resources AutoCloseable contracts, and custom exceptions.");
+                tips.add("Exception Handling: Review try-with-resources suppressed exceptions and finally block return semantics.");
             } else if (t.contains("oop") || t.contains("inheritance") || t.contains("polymorphism")) {
                 tips.add("OOP: Review method overriding rules (covariance, access modifiers), dynamic dispatch, and composition vs inheritance.");
             } else if (t.contains("jvm") || t.contains("memory")) {
@@ -394,23 +366,13 @@ public class PracticeService {
     }
 
     private TestSession getSession(String testId) {
-        TestSession session = sessionCache.get(testId);
-        if (session == null) {
-            session = testRepository.findByTestId(testId).orElse(null);
-            if (session != null) sessionCache.put(testId, session);
-        }
-        return session;
+        return sessionCache.get(testId);
     }
 
     private Question getQuestionById(String id) {
         if (id == null) return null;
         Question q = questionCache.get(id);
         if (q != null) return q;
-        Optional<Question> opt = questionRepository.findById(id);
-        if (opt.isPresent()) {
-            questionCache.put(id, opt.get());
-            return opt.get();
-        }
         return questionBankService.getCuratedQuestionBank().stream()
                 .filter(item -> id.equals(item.getId()))
                 .findFirst()
