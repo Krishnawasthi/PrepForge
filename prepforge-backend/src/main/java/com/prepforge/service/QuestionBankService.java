@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.stream.Collectors;
 
 @Service
 public class QuestionBankService {
@@ -25,550 +24,370 @@ public class QuestionBankService {
     @PostConstruct
     public void seedInitialQuestions() {
         try {
-            log.info("Refreshing comprehensive Java Backend question bank in database...");
+            log.info("Refreshing pure Java interview question bank in database...");
             curatedBankCache = getCuratedQuestionBank();
             questionRepository.deleteAll();
             questionRepository.saveAll(curatedBankCache);
-            log.info("Successfully seeded {} curated Java Backend questions.", curatedBankCache.size());
+            log.info("Successfully seeded {} curated pure Java questions.", curatedBankCache.size());
         } catch (Exception e) {
-            log.warn("Question bank database seeding skipped (will use in-memory bank): {}", e.getMessage());
+            log.warn("Question bank database seeding skipped (using in-memory bank): {}", e.getMessage());
             curatedBankCache = getCuratedQuestionBank();
         }
     }
 
     /**
-     * Generates dynamic, strictly non-repetitive questions for the specified topics.
+     * Generates strictly topic-constrained questions for the user's selected topics.
+     * Guaranteed ~45% code review / output prediction questions.
      */
     public List<Question> generateDynamicJavaQuestions(List<String> topics, String experienceLevel, String difficulty, int targetCount) {
-        List<Question> dynamicList = new ArrayList<>();
+        List<Question> resultList = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
         Random random = ThreadLocalRandom.current();
-        Set<String> generatedQuestions = new HashSet<>();
 
-        List<String> effectiveTopics = (topics != null && !topics.isEmpty())
+        List<String> validTopics = (topics != null && !topics.isEmpty())
                 ? topics
-                : List.of("Core Java", "Spring Boot", "Multithreading & Concurrency");
+                : List.of("Core Java", "Java Collections Framework", "Exception Handling", "Streams API");
 
+        // First, draw curated questions matching the selected topics
+        for (Question q : curatedBankCache) {
+            if (isTopicMatch(q.getTopic(), validTopics)) {
+                if (seen.add(normalize(q.getQuestion()))) {
+                    resultList.add(q);
+                    if (resultList.size() >= targetCount) return resultList;
+                }
+            }
+        }
+
+        // Generate dynamic questions strictly for the selected topics
         int attempts = 0;
-        int maxAttempts = targetCount * 10;
+        int maxAttempts = targetCount * 20;
 
-        while (dynamicList.size() < targetCount && attempts < maxAttempts) {
+        while (resultList.size() < targetCount && attempts < maxAttempts) {
             attempts++;
-            String topic = effectiveTopics.get(dynamicList.size() % effectiveTopics.size());
-            int variationIndex = attempts % 20;
+            String topic = validTopics.get(attempts % validTopics.size());
+            int variant = attempts;
 
-            Question q = createDiverseParametricQuestion(topic, experienceLevel, difficulty, variationIndex, random);
-            if (q != null && generatedQuestions.add(q.getQuestion().trim().toLowerCase())) {
-                dynamicList.add(q);
+            Question q = createTopicSpecificQuestion(topic, experienceLevel, difficulty, variant, random);
+            if (q != null && isTopicMatch(q.getTopic(), validTopics)) {
+                if (seen.add(normalize(q.getQuestion()))) {
+                    resultList.add(q);
+                }
             }
         }
 
-        // Guaranteed fallback if still under target count: synthesize unique algorithmic / interview scenarios
-        int counter = 1;
-        while (dynamicList.size() < targetCount) {
-            String topic = effectiveTopics.get(dynamicList.size() % effectiveTopics.size());
-            Question extra = createAlgorithmicOutputQuestion(topic, experienceLevel, difficulty, counter++, random);
-            if (generatedQuestions.add(extra.getQuestion().trim().toLowerCase())) {
-                dynamicList.add(extra);
-            }
-        }
-
-        return dynamicList;
+        return resultList;
     }
 
     public Question createAlgorithmicOutputQuestion(String topic, String diff, String exp) {
-        return createAlgorithmicOutputQuestion(topic, exp, diff, new Random().nextInt(1000), new Random());
+        return createTopicSpecificQuestion(topic, exp, diff, new Random().nextInt(100), new Random());
     }
 
     public Question createDiverseParametricQuestion(String topic, String diff, String exp) {
-        return createDiverseParametricQuestion(topic, exp, diff, new Random().nextInt(20), new Random());
+        return createTopicSpecificQuestion(topic, exp, diff, new Random().nextInt(100), new Random());
     }
 
-    private Question createAlgorithmicOutputQuestion(String topic, String exp, String diff, int index, Random random) {
-        String uid = "algo_" + System.currentTimeMillis() + "_" + index;
-        int a = random.nextInt(2, 9);
-        int b = a * random.nextInt(2, 5);
-        int c = b + random.nextInt(1, 4);
-
-        if (index % 3 == 0) {
-            int shift = random.nextInt(1, 4);
-            int shiftedVal = a << shift;
-            return createQuestion(uid,
-                    "What is the output of evaluating `(" + a + " << " + shift + ") ^ " + b + "` in Java?",
-                    List.of(String.valueOf(shiftedVal ^ b), String.valueOf(shiftedVal | b), String.valueOf(shiftedVal & b), String.valueOf(a ^ b)),
-                    String.valueOf(shiftedVal ^ b),
-                    "Left shift (" + a + " << " + shift + ") shifts bits left by " + shift + " positions, producing " + shiftedVal + ". Then bitwise XOR (^) with " + b + " produces " + (shiftedVal ^ b) + ".",
-                    Map.of("A", "Correct calculation of bitwise shift and XOR.",
-                            "B", "Incorrect. Bitwise OR (|) was evaluated instead of XOR (^).",
-                            "C", "Incorrect. Bitwise AND (&) was evaluated instead of XOR (^).",
-                            "D", "Incorrect. The bitwise shift was omitted."),
-                    topic, "java-syntax", diff, exp, "Output-based",
-                    "Bitwise operations frequently appear in senior Java coding rounds testing precision under pressure.");
-        } else if (index % 3 == 1) {
-            int start = random.nextInt(1, 5);
-            int limit = random.nextInt(5, 10);
-            int sum = 0;
-            for (int k = start; k < start + limit; k++) if (k % 2 == 0) sum += k;
-
-            return createQuestion(uid,
-                    "What is the result of the following Java Stream pipeline?\n\n```java\nint sum = IntStream.range(" + start + ", " + (start + limit) + ")\n    .filter(n -> n % 2 == 0)\n    .sum();\nSystem.out.println(sum);\n```",
-                    List.of(String.valueOf(sum), String.valueOf(sum + start), String.valueOf(sum * 2), "Compilation Error"),
-                    String.valueOf(sum),
-                    "IntStream.range creates a half-open interval [" + start + ", " + (start + limit) + "). The filter retains even numbers, and sum() aggregates them to " + sum + ".",
-                    Map.of("A", "Correct. Evaluates even numbers in the specified half-open interval.",
-                            "B", "Incorrect. Range in Java is half-open (exclusive of upper bound).",
-                            "C", "Incorrect calculation of stream reduction.",
-                            "D", "Incorrect. IntStream syntax is valid Java 8+."),
-                    topic, "stream-operations", diff, exp, "Output-based",
-                    "Remember that IntStream.range(a, b) is exclusive of b, while IntStream.rangeClosed(a, b) is inclusive of b.");
-        } else {
-            int capacity = (1 << random.nextInt(4, 7));
-            int expectedThreshold = (int) (capacity * 0.75f);
-            return createQuestion(uid,
-                    "A `HashMap` is instantiated with `new HashMap<>(" + capacity + ")`. At what entry count will the table resize by default?",
-                    List.of(String.valueOf(expectedThreshold) + " entries (based on 0.75 default load factor)",
-                            String.valueOf(capacity) + " entries (when capacity is 100% full)",
-                            String.valueOf(capacity * 2) + " entries",
-                            "16 entries (default fixed threshold)"),
-                    String.valueOf(expectedThreshold) + " entries (based on 0.75 default load factor)",
-                    "The resize threshold is calculated as capacity (" + capacity + ") * load factor (0.75) = " + expectedThreshold + ". When map size exceeds this threshold, the bucket array doubles in size.",
-                    Map.of("A", "Correct. Threshold = capacity * default load factor (0.75).",
-                            "B", "Incorrect. Resizing occurs before 100% capacity to prevent excessive clustering.",
-                            "C", "Incorrect. Doubling occurs after reaching the threshold, not at double capacity.",
-                            "D", "Incorrect. Initial capacity was explicitly set to " + capacity + "."),
-                    topic, "hashmap-internals", diff, exp, "Conceptual MCQ",
-                    "Always mention that initial capacity should be sized as (expectedEntries / 0.75) + 1 to avoid runtime rehashing in production.");
+    private boolean isTopicMatch(String questionTopic, List<String> allowedTopics) {
+        if (questionTopic == null) return false;
+        for (String allowed : allowedTopics) {
+            if (allowed.equalsIgnoreCase(questionTopic) ||
+                allowed.toLowerCase().contains(questionTopic.toLowerCase()) ||
+                questionTopic.toLowerCase().contains(allowed.toLowerCase())) {
+                return true;
+            }
         }
+        return false;
     }
 
-    private Question createDiverseParametricQuestion(String topic, String exp, String diff, int variant, Random random) {
+    private String normalize(String text) {
+        return text == null ? "" : text.replaceAll("[^a-zA-Z0-9]", "").toLowerCase();
+    }
+
+    /**
+     * Creates topic-specific questions strictly belonging to the requested topic.
+     * ~45% of generated variants are code review / output prediction questions.
+     */
+    private Question createTopicSpecificQuestion(String topic, String exp, String diff, int variant, Random random) {
         String uid = "dyn_" + topic.toLowerCase().replaceAll("[^a-z0-9]", "_") + "_" + System.currentTimeMillis() + "_" + random.nextInt(10000);
+        String t = topic.toLowerCase();
 
-        if (topic.contains("Collections") || topic.contains("Collection")) {
-            switch (variant % 5) {
-                case 0:
-                    return createQuestion(uid,
-                            "In a high-throughput Java backend application, which collection provides thread-safe access with bucket-level CAS/synchronized locking rather than global table synchronization?",
-                            List.of("ConcurrentHashMap", "Collections.synchronizedMap(new HashMap<>())", "Hashtable", "TreeMap"),
-                            "ConcurrentHashMap",
-                            "ConcurrentHashMap uses lock striping / synchronized tree bins on individual buckets (CAS + synchronized per bucket) to allow concurrent reads and writes without locking the entire map.",
-                            Map.of("A", "Correct. ConcurrentHashMap locks only specific bucket bins during writes.",
-                                    "B", "Incorrect. synchronizedMap locks the entire map instance on every read/write.",
-                                    "C", "Incorrect. Hashtable synchronizes at the method level globally.",
-                                    "D", "Incorrect. TreeMap is not thread-safe."),
-                            "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
-                            "Always mention how ConcurrentHashMap in Java 8+ replaced Segment locks with CAS and synchronized bucket heads.");
-                case 1:
-                    return createQuestion(uid,
-                            "What is the time complexity of `ArrayList.remove(0)` versus `LinkedList.removeFirst()` in Java?",
-                            List.of("O(N) for ArrayList vs O(1) for LinkedList", "O(1) for ArrayList vs O(N) for LinkedList", "O(1) for both", "O(N) for both"),
-                            "O(N) for ArrayList vs O(1) for LinkedList",
-                            "ArrayList must shift all N-1 subsequent elements to the left via System.arraycopy (O(N)). LinkedList simply updates its head node pointer (O(1)).",
-                            Map.of("A", "Correct. ArrayList requires shifting remaining elements; LinkedList only unlinks pointers.",
-                                    "B", "Incorrect. ArrayList cannot shift elements in O(1).",
-                                    "C", "Incorrect. ArrayList is not O(1) for index 0 deletion.",
-                                    "D", "Incorrect. LinkedList deletion of head is O(1)."),
-                            "Java Collections Framework", "list-set-implementations", diff, exp, "Conceptual MCQ",
-                            "Remember that ArrayList has better CPU cache locality despite O(N) shifts for small collections.");
-                case 2:
-                    return createQuestion(uid,
-                            "Which Java Collection guarantees that elements are maintained in their exact insertion order without sorting by natural comparison?",
-                            List.of("LinkedHashMap", "TreeMap", "HashMap", "ConcurrentSkipListMap"),
-                            "LinkedHashMap",
-                            "LinkedHashMap maintains a doubly-linked list running through all of its entries, preserving insertion order (or access order for LRU caches).",
-                            Map.of("A", "Correct. LinkedHashMap preserves insertion or LRU access order.",
-                                    "B", "Incorrect. TreeMap sorts keys by natural order or Comparator.",
-                                    "C", "Incorrect. HashMap makes no guarantees regarding iteration order.",
-                                    "D", "Incorrect. ConcurrentSkipListMap maintains natural sorted order."),
-                            "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
-                            "LinkedHashMap is commonly used to implement LRU caches by overriding removeEldestEntry().");
-                case 3:
-                    return createQuestion(uid,
-                            "Under what condition does `CopyOnWriteArrayList` deliver superior performance compared to `Collections.synchronizedList()`?",
-                            List.of("When read operations vastly outnumber write operations", "When write/insert operations vastly outnumber read operations", "When the list size exceeds 10 million items", "When frequent sort operations are executed"),
-                            "When read operations vastly outnumber write operations",
-                            "CopyOnWriteArrayList allows read operations to proceed without locks on a snapshot array. Writes create a fresh copy of the array, making writes expensive but reads lock-free.",
-                            Map.of("A", "Correct. Read-heavy scenarios (e.g. event listeners) benefit from lock-free reads.",
-                                    "B", "Incorrect. Write-heavy workloads cause massive GC and memory copying overhead.",
-                                    "C", "Incorrect. Copying 10M items on write would cause severe GC pauses.",
-                                    "D", "Incorrect. Sorting triggers multiple mutations."),
-                            "Java Collections Framework", "list-set-implementations", diff, exp, "Scenario-based",
-                            "Use CopyOnWriteArrayList for subscriber/listener registries where subscriptions change rarely.");
-                default:
-                    return createQuestion(uid,
-                            "What happens when two distinct objects produce the exact same `hashCode()` in Java's `HashMap`?",
-                            List.of("They are placed in the same bucket and checked via equals()", "The second object overwrites the first immediately", "A HashCollisionException is thrown", "The HashMap automatically doubles its table capacity"),
-                            "They are placed in the same bucket and checked via equals()",
-                            "Hash collisions are resolved by chaining elements in the same bucket. When searching, HashMap traverses the bucket and calls equals() to locate the matching key.",
-                            Map.of("A", "Correct. Collisions reside in the same bucket chained as a list or tree.",
-                                    "B", "Incorrect. Overwriting only occurs if equals() also returns true.",
-                                    "C", "Incorrect. Collisions are standard and expected; no exception is thrown.",
-                                    "D", "Incorrect. Resizing is governed by total count and load factor, not single collisions."),
-                            "Java Collections Framework", "hashmap-internals", diff, exp, "Conceptual MCQ",
-                            "Remind the interviewer that poorly distributed hashCode() degrades lookup from O(1) to O(log N) or O(N).");
+        // 1. EXCEPTION HANDLING
+        if (t.contains("exception")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output of the following Java code?\n\n```java\nclass Test {\n    public static int test() {\n        try {\n            int x = 10 / 0;\n            return 1;\n        } catch (ArithmeticException e) {\n            return 2;\n        } finally {\n            return 3;\n        }\n    }\n    public static void main(String[] args) {\n        System.out.println(test());\n    }\n}\n```",
+                        List.of("3", "2", "1", "ArithmeticException is thrown"),
+                        "3",
+                        "The finally block always executes and its return statement overrides any return statement executed in the try or catch block.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "Which statement is true regarding Java's try-with-resources statement introduced in Java 7?",
+                        List.of("Resources are closed in the reverse order of their declaration",
+                                "Resources are closed in the exact order of their declaration",
+                                "Resources must implement the java.lang.Runnable interface",
+                                "The catch block always executes before the AutoCloseable resources are closed"),
+                        "Resources are closed in the reverse order of their declaration",
+                        "In try-with-resources, resources declared in the try(...) header are closed automatically in reverse order of declaration before any catch/finally blocks execute.",
+                        topic, diff);
             }
-        } else if (topic.contains("Multithreading") || topic.contains("Concurrency")) {
-            switch (variant % 5) {
-                case 0:
-                    int core = random.nextInt(2, 6);
-                    int max = core * 2;
-                    return createQuestion(uid,
-                            "Consider a `ThreadPoolExecutor` configured with corePoolSize=" + core + ", maxPoolSize=" + max + ", and an unbounded `LinkedBlockingQueue`. When " + (max + 10) + " tasks are submitted concurrently, how many active worker threads are created?",
-                            List.of(core + " threads (only corePoolSize is created because the work queue is unbounded)",
-                                    max + " threads (maxPoolSize is reached)",
-                                    (max + 10) + " threads",
-                                    "An RejectedExecutionException is thrown"),
-                            core + " threads (only corePoolSize is created because the work queue is unbounded)",
-                            "ThreadPoolExecutor only scales threads beyond corePoolSize when the work queue is completely full. Because LinkedBlockingQueue is unbounded by default, tasks queue indefinitely and maxPoolSize is never utilized.",
-                            Map.of("A", "Correct. Threads beyond corePoolSize are only spawned if the queue rejects task insertion.",
-                                    "B", "Incorrect. maxPoolSize is never reached with an unbounded queue.",
-                                    "C", "Incorrect. The executor never spawns more than maxPoolSize threads.",
-                                    "D", "Incorrect. Unbounded queues do not reject tasks unless memory is exhausted."),
-                            "Multithreading & Concurrency", "executors-futures", diff, exp, "Scenario-based",
-                            "Classic senior trap: Always bound your queues in production to avoid OutOfMemoryError.");
-                case 1:
-                    return createQuestion(uid,
-                            "What is the difference between `volatile` and `AtomicInteger` in Java concurrency?",
-                            List.of("volatile guarantees memory visibility only; AtomicInteger guarantees visibility AND atomic read-modify-write operations (CAS)",
-                                    "volatile is synchronized while AtomicInteger is lock-free",
-                                    "volatile is atomic for compound operations like count++ while AtomicInteger is not",
-                                    "They are completely identical in function and byte-code"),
-                            "volatile guarantees memory visibility only; AtomicInteger guarantees visibility AND atomic read-modify-write operations (CAS)",
-                            "volatile only guarantees that reads and writes are visible across CPU caches and prevents instruction reordering. Compound operations like count++ (read, increment, write) are NOT atomic on volatile variables. AtomicInteger uses hardware CAS (Compare-And-Swap) for atomicity.",
-                            Map.of("A", "Correct. volatile provides visibility; AtomicInteger provides visibility + atomicity via CAS.",
-                                    "B", "Incorrect. volatile does not use monitor synchronization.",
-                                    "C", "Incorrect. count++ is not atomic with volatile.",
-                                    "D", "Incorrect. They have fundamentally different atomicity guarantees."),
-                            "Multithreading & Concurrency", "locks-volatiles", diff, exp, "Conceptual MCQ",
-                            "Emphasize that count++ on a volatile int produces race conditions under concurrent writes.");
-                case 2:
-                    return createQuestion(uid,
-                            "What problem does `ReentrantLock.tryLock(timeout, unit)` solve that intrinsic `synchronized` blocks cannot?",
-                            List.of("Deadlock avoidance via timed non-blocking lock acquisition attempts",
-                                    "Automatic garbage collection of thread monitors",
-                                    "Guaranteeing zero memory cache invalidations",
-                                    "Enforcing thread priority scheduling"),
-                            "Deadlock avoidance via timed non-blocking lock acquisition attempts",
-                            "Intrinsic synchronized blocks block indefinitely if a monitor is held, risking unrecoverable deadlocks. ReentrantLock allows tryLock() with timeouts, letting a thread back off and release held locks if it cannot acquire the next lock.",
-                            Map.of("A", "Correct. Timed tryLock() allows breaking deadlock cycles through cooperative backoff.",
-                                    "B", "Incorrect. JVM garbage collection does not depend on tryLock.",
-                                    "C", "Incorrect. Locks always coordinate CPU memory barriers.",
-                                    "D", "Incorrect. Java locks do not override OS thread priority."),
-                            "Multithreading & Concurrency", "locks-volatiles", diff, exp, "Best-practice",
-                            "Explain how tryLock() enables the lock-ordering back-off pattern to prevent deadlocks in distributed systems.");
-                case 3:
-                    return createQuestion(uid,
-                            "In `CompletableFuture`, what is the key difference between `thenApply()` and `thenCompose()`?",
-                            List.of("thenApply maps a value T to U; thenCompose flattens a nested CompletableFuture (similar to flatMap)",
-                                    "thenApply runs asynchronously on a new thread while thenCompose is synchronous",
-                                    "thenCompose catches exceptions while thenApply cannot",
-                                    "thenApply is deprecated in favor of thenCompose"),
-                            "thenApply maps a value T to U; thenCompose flattens a nested CompletableFuture (similar to flatMap)",
-                            "thenApply(fn) takes a function T -> U and returns CompletableFuture<U>. thenCompose(fn) takes a function T -> CompletableFuture<U> and flattens it, preventing nested CompletableFuture<CompletableFuture<U>>.",
-                            Map.of("A", "Correct. thenApply is equivalent to map(), whereas thenCompose is equivalent to flatMap().",
-                                    "B", "Incorrect. Asynchronous execution is controlled by the Async variants (thenApplyAsync).",
-                                    "C", "Incorrect. Exception handling is handled by exceptionally() or handle().",
-                                    "D", "Incorrect. Neither method is deprecated."),
-                            "Multithreading & Concurrency", "executors-futures", diff, exp, "Conceptual MCQ",
-                            "Compare thenCompose to Mono.flatMap() in Spring WebFlux or Optional.flatMap().");
-                default:
-                    return createQuestion(uid,
-                            "Why is it essential to call `ThreadLocal.remove()` in applications using pooled worker threads (such as Tomcat or ExecutorService)?",
-                            List.of("To prevent memory leaks and state pollution across different HTTP requests reusing the same thread",
-                                    "To prevent ClassNotFoundException on application stop",
-                                    "To notify the Garbage Collector to shut down the thread pool",
-                                    "Because ThreadLocal throws an IllegalStateException if accessed twice"),
-                            "To prevent memory leaks and state pollution across different HTTP requests reusing the same thread",
-                            "Web servers reuse worker threads. If a ThreadLocal value is not removed after request processing, the thread retains strong references to objects in its ThreadLocalMap, causing both memory leaks and security/data leak issues when the thread serves the next user.",
-                            Map.of("A", "Correct. Failing to remove ThreadLocal values causes memory leaks and cross-request state pollution.",
-                                    "B", "Incorrect. Classloader leaks can occur, but ClassNotFoundException is not the direct result.",
-                                    "C", "Incorrect. ThreadLocal has no control over thread pool shutdown.",
-                                    "D", "Incorrect. ThreadLocal can be read multiple times safely."),
-                            "Multithreading & Concurrency", "thread-lifecycle", diff, exp, "Best-practice",
-                            "Always place threadLocal.remove() inside a finally block at the end of filter/interceptor chains.");
+        }
+
+        // 2. COLLECTIONS FRAMEWORK
+        if (t.contains("collection")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                int val1 = random.nextInt(10, 20);
+                int val2 = val1 + 5;
+                return createQuestion(uid,
+                        "What is the output of the following Java code?\n\n```java\nimport java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Map<String, Integer> map = new HashMap<>();\n        map.put(\"A\", " + val1 + ");\n        map.computeIfPresent(\"A\", (k, v) -> v + 10);\n        map.computeIfAbsent(\"B\", k -> " + val2 + ");\n        map.computeIfPresent(\"C\", (k, v) -> 100);\n        System.out.println(map.get(\"A\") + \" \" + map.get(\"B\") + \" \" + map.get(\"C\"));\n    }\n}\n```",
+                        List.of((val1 + 10) + " " + val2 + " null",
+                                (val1 + 10) + " " + val2 + " 100",
+                                val1 + " " + val2 + " null",
+                                "NullPointerException"),
+                        (val1 + 10) + " " + val2 + " null",
+                        "computeIfPresent modifies 'A' to " + (val1 + 10) + ". computeIfAbsent computes 'B' to " + val2 + ". computeIfPresent does nothing for 'C' because key 'C' is absent, so map.get(\"C\") returns null.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "How does Java's ConcurrentHashMap achieve thread safety in Java 8+ compared to Hashtable?",
+                        List.of("Using bucket-level synchronized blocks and CAS operations rather than a global table lock",
+                                "By cloning the entire bucket array on every mutation",
+                                "By using ReentrantReadWriteLock globally across all buckets",
+                                "By delegating all write operations to a single worker background thread"),
+                        "Using bucket-level synchronized blocks and CAS operations rather than a global table lock",
+                        "In Java 8+, ConcurrentHashMap uses lock-free Compare-And-Swap (CAS) for node insertion and synchronizes only on the head node of individual hash bins during hash collisions.",
+                        topic, diff);
             }
-        } else if (topic.contains("Spring Boot") || topic.contains("Spring")) {
-            switch (variant % 5) {
-                case 0:
-                    return createQuestion(uid,
-                            "How does Spring Boot determine which `@Configuration` classes to load during auto-configuration?",
-                            List.of("By reading META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports and evaluating @Conditional annotations",
-                                    "By scanning the entire disk for classes ending in 'Config'",
-                                    "By checking the pom.xml at runtime via Maven plugins",
-                                    "By inspecting the active OS environment variables for configuration flags"),
-                            "By reading META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports and evaluating @Conditional annotations",
-                            "Spring Boot 3 uses META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports (or spring.factories in Boot 2.x). Classes listed there are evaluated against conditional annotations (@ConditionalOnClass, @ConditionalOnMissingBean).",
-                            Map.of("A", "Correct. AutoConfiguration.imports lists candidate configs, filtered by @Conditional annotations.",
-                                    "B", "Incorrect. Spring Boot does not do arbitrary disk scans.",
-                                    "C", "Incorrect. pom.xml is not parsed by the running JVM at runtime.",
-                                    "D", "Incorrect. Auto-configuration relies on classpath detection and bean presence."),
-                            "Spring Boot", "auto-configuration", diff, exp, "Conceptual MCQ",
-                            "Mention how @ConditionalOnMissingBean allows developers to override default Spring Boot beans cleanly.");
-                case 1:
-                    return createQuestion(uid,
-                            "What is the default bean scope in the Spring ApplicationContext, and how does it behave in a multi-threaded web application?",
-                            List.of("Singleton scope; a single shared instance is used across all concurrent request threads",
-                                    "Prototype scope; a new instance is created for every HTTP request",
-                                    "Request scope; each thread gets an isolated bean copy automatically",
-                                    "Session scope; beans are tied to the HTTP session"),
-                            "Singleton scope; a single shared instance is used across all concurrent request threads",
-                            "Spring beans are Singletons by default. Since multiple threads concurrently execute methods on the same singleton instance, any mutable instance state is vulnerable to race conditions.",
-                            Map.of("A", "Correct. Singleton beans are shared across all threads; they should remain strictly stateless.",
-                                    "B", "Incorrect. Prototype scope must be explicitly declared with @Scope(\"prototype\").",
-                                    "C", "Incorrect. Request scope requires @RequestScope.",
-                                    "D", "Incorrect. Session scope requires @SessionScope."),
-                            "Spring Framework Core", "ioc-di", diff, exp, "Conceptual MCQ",
-                            "Emphasize that enterprise Spring services should always be stateless to ensure thread safety.");
-                case 2:
-                    return createQuestion(uid,
-                            "In Spring AOP, when does calling a method annotated with `@Transactional` FAIL to trigger a transaction?",
-                            List.of("When the method is invoked internally by another method in the same class (self-invocation)",
-                                    "When the method returns void",
-                                    "When the method is called from an asynchronous thread",
-                                    "When the class implements an interface"),
-                            "When the method is invoked internally by another method in the same class (self-invocation)",
-                            "Spring AOP creates dynamic proxies around beans. Calling this.annotatedMethod() bypasses the proxy interceptor and invokes the target instance method directly, bypassing transactional interceptors.",
-                            Map.of("A", "Correct. Self-invocation bypasses the Spring AOP proxy wrapper.",
-                                    "B", "Incorrect. Methods returning void can be fully transactional.",
-                                    "C", "Incorrect. Calling a separate bean method from an async thread still goes through its proxy.",
-                                    "D", "Incorrect. Implementing interfaces allows standard JDK dynamic proxies."),
-                            "Spring Framework Core", "spring-aop", diff, exp, "Scenario-based",
-                            "To fix self-invocation: extract the method into a separate service bean or inject the self-bean lazily.");
-                case 3:
-                    return createQuestion(uid,
-                            "Which Spring Boot Actuator endpoint provides detailed production metrics like JVM memory, garbage collection pauses, and HTTP request throughput?",
-                            List.of("/actuator/metrics", "/actuator/health", "/actuator/info", "/actuator/beans"),
-                            "/actuator/metrics",
-                            "/actuator/metrics exposes Micrometer metrics including jvm.memory.used, jvm.gc.pause, and http.server.requests. /actuator/health only indicates component UP/DOWN status.",
-                            Map.of("A", "Correct. /actuator/metrics provides detailed performance counters and gauges.",
-                                    "B", "Incorrect. /actuator/health provides health check status indicator.",
-                                    "C", "Incorrect. /actuator/info exposes arbitrary application build details.",
-                                    "D", "Incorrect. /actuator/beans lists all configured ApplicationContext beans."),
-                            "Spring Boot", "actuator-metrics", diff, exp, "Conceptual MCQ",
-                            "Mention Prometheus integration: /actuator/prometheus formats these metrics for scraping.");
-                default:
-                    return createQuestion(uid,
-                            "What is the difference between `@RestController` and `@Controller` in Spring Boot?",
-                            List.of("@RestController is a convenience annotation combining @Controller and @ResponseBody",
-                                    "@RestController supports XML while @Controller only supports JSON",
-                                    "@RestController is for asynchronous methods only",
-                                    "@RestController disables Spring Security filters automatically"),
-                            "@RestController is a convenience annotation combining @Controller and @ResponseBody",
-                            "@RestController annotates classes where every method returns domain objects directly written into the HTTP response body as JSON/XML via HttpMessageConverter, rather than rendering an HTML view template.",
-                            Map.of("A", "Correct. @RestController = @Controller + @ResponseBody on every handler method.",
-                                    "B", "Incorrect. Both can support XML or JSON based on HttpMessageConverters.",
-                                    "C", "Incorrect. Asynchronous execution requires @Async or reactive types.",
-                                    "D", "Incorrect. Security applies identically to both."),
-                            "RESTful API Design", "http-semantics", diff, exp, "Conceptual MCQ",
-                            "Explain how Jackson's MappingJackson2HttpMessageConverter serializes Java DTOs into JSON.");
+        }
+
+        // 3. STREAMS API
+        if (t.contains("stream")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                int start = random.nextInt(1, 4);
+                return createQuestion(uid,
+                        "What is the output of the following Java Stream code?\n\n```java\nimport java.util.stream.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        int result = IntStream.of(" + start + ", " + (start + 1) + ", " + (start + 2) + ", " + (start + 3) + ")\n            .filter(n -> n % 2 != 0)\n            .map(n -> n * 2)\n            .reduce(0, Integer::sum);\n        System.out.println(result);\n    }\n}\n```",
+                        List.of(String.valueOf(computeStreamResult(start)),
+                                String.valueOf(computeStreamResult(start) + 2),
+                                String.valueOf(computeStreamResult(start) * 2),
+                                "0"),
+                        String.valueOf(computeStreamResult(start)),
+                        "The stream filters odd numbers from the input sequence, multiplies each by 2, and sums them via reduce.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "Which of the following is a terminal operation in Java Streams that triggers stream pipeline evaluation?",
+                        List.of("collect()", "peek()", "map()", "filter()"),
+                        "collect()",
+                        "Intermediate operations like map(), filter(), and peek() are lazy. Terminal operations like collect(), forEach(), reduce(), and findFirst() trigger pipeline execution.",
+                        topic, diff);
             }
-        } else if (topic.contains("Java 8") || topic.contains("Streams")) {
-            switch (variant % 3) {
-                case 0:
-                    return createQuestion(uid,
-                            "In the Java Streams API, what is the fundamental difference between intermediate and terminal operations?",
-                            List.of("Intermediate operations are lazy and return a new Stream; terminal operations trigger execution and close the stream",
-                                    "Intermediate operations execute immediately; terminal operations execute on a separate thread",
-                                    "Intermediate operations modify the underlying collection in-place",
-                                    "Terminal operations can be chained together indefinitely"),
-                            "Intermediate operations are lazy and return a new Stream; terminal operations trigger execution and close the stream",
-                            "Intermediate operations (filter, map, sorted) are evaluated lazily only when a terminal operation (collect, count, forEach) is called. Once a terminal operation finishes, the stream pipeline is consumed and cannot be reused.",
-                            Map.of("A", "Correct. Intermediate operations are lazy transformations; terminal operations produce a result or side effect.",
-                                    "B", "Incorrect. Intermediate operations are strictly lazy and do not execute eagerly.",
-                                    "C", "Incorrect. Streams never mutate their source data structures.",
-                                    "D", "Incorrect. A stream pipeline can only have exactly one terminal operation."),
-                            "Streams API", "stream-operations", diff, exp, "Conceptual MCQ",
-                            "Demonstrate that attempting to consume a stream twice results in IllegalStateException: stream has already been operated upon or closed.");
-                case 1:
-                    return createQuestion(uid,
-                            "When should `parallelStream()` be avoided in high-throughput enterprise backend services?",
-                            List.of("When tasks perform blocking I/O (database, HTTP calls) or when request threads are already pooled",
-                                    "When processing more than 100 elements in memory",
-                                    "When the CPU has more than 4 cores",
-                                    "When filtering immutable strings"),
-                            "When tasks perform blocking I/O (database, HTTP calls) or when request threads are already pooled",
-                            "parallelStream() shares the common ForkJoinPool.commonPool() across the entire JVM. Blocking I/O inside parallel streams starves worker threads, crippling all parallel streams across the application.",
-                            Map.of("A", "Correct. Blocking I/O saturates the common ForkJoinPool, impacting the entire JVM.",
-                                    "B", "Incorrect. In-memory CPU-bound computations on large collections are the primary use-case.",
-                                    "C", "Incorrect. Multiple cores are beneficial for parallel computation.",
-                                    "D", "Incorrect. String filtering is purely CPU-bound."),
-                            "Streams API", "parallel-streams", diff, exp, "Best-practice",
-                            "Never use parallelStream() for database calls or REST API requests in Spring Boot.");
-                default:
-                    return createQuestion(uid,
-                            "What is the difference between `Optional.orElse()` and `Optional.orElseGet()` in Java 8+?",
-                            List.of("orElse() evaluates its default argument eagerly even when value is present; orElseGet() takes a Supplier evaluated lazily",
-                                    "orElse() is thread-safe while orElseGet() is not",
-                                    "orElse() returns null if the value is missing",
-                                    "They behave identically with zero performance differences"),
-                            "orElse() evaluates its default argument eagerly even when value is present; orElseGet() takes a Supplier evaluated lazily",
-                            "orElse(expensiveCall()) executes expensiveCall() every time regardless of whether the Optional has a value. orElseGet(() -> expensiveCall()) only invokes the lambda if the Optional is empty.",
-                            Map.of("A", "Correct. orElse is eager; orElseGet is lazy via Supplier.",
-                                    "B", "Incorrect. Thread safety is unaffected.",
-                                    "C", "Incorrect. orElse returns the default argument provided.",
-                                    "D", "Incorrect. Eager evaluation can cause unnecessary database or network calls."),
-                            "Java 8+ & Modern Java", "optional-api", diff, exp, "Code analysis",
-                            "Always prefer orElseGet() when the fallback involves computing an object or database lookup.");
+        }
+
+        // 4. STRINGS & IMMUTABILITY
+        if (t.contains("string")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output of the following Java code?\n\n```java\npublic class Main {\n    public static void main(String[] args) {\n        String s1 = \"Java\";\n        String s2 = new String(\"Java\");\n        String s3 = s2.intern();\n        System.out.println((s1 == s2) + \" \" + (s1 == s3) + \" \" + s1.equals(s2));\n    }\n}\n```",
+                        List.of("false true true", "true true true", "false false true", "true false true"),
+                        "false true true",
+                        "s1 is a literal in the String pool. s2 is a separate heap object, so (s1 == s2) is false. s2.intern() returns the pool reference matching s1, so (s1 == s3) is true. equals() compares content, returning true.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "Why are String objects immutable in Java?",
+                        List.of("Security, thread safety, String pool caching, and stable hashCode caching",
+                                "Because Java does not allow dynamic memory allocation on the heap",
+                                "Because primitive types cannot be wrapped in mutable objects",
+                                "To allow multiple inheritance of character arrays"),
+                        "Security, thread safety, String pool caching, and stable hashCode caching",
+                        "Immutability allows String pooling (saving heap memory), safe parameter passing (e.g. database URLs, network sockets), thread safety without locks, and caching of hashCode.",
+                        topic, diff);
             }
+        }
+
+        // 5. MULTITHREADING & CONCURRENCY
+        if (t.contains("thread") || t.contains("concurrency")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What will happen when the following code is executed?\n\n```java\npublic class Main {\n    public static void main(String[] args) {\n        Thread t = new Thread(() -> System.out.print(\"Running \"));\n        t.run();\n        t.run();\n    }\n}\n```",
+                        List.of("Prints 'Running Running ' on the main thread without throwing an exception",
+                                "Throws IllegalThreadStateException on the second call",
+                                "Spawns two new OS threads concurrently",
+                                "Compilation Error because run() cannot be called directly"),
+                        "Prints 'Running Running ' on the main thread without throwing an exception",
+                        "Calling run() directly simply executes the method synchronously on the current (main) thread. Only calling start() initiates a new thread and throws IllegalThreadStateException if called repeatedly.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "What guarantee does the `volatile` keyword provide in Java?",
+                        List.of("Memory visibility across threads and prevention of instruction reordering",
+                                "Mutual exclusion lock synchronization like synchronized blocks",
+                                "Atomicity for compound operations such as count++",
+                                "Automatic garbage collection prioritization for the variable"),
+                        "Memory visibility across threads and prevention of instruction reordering",
+                        "volatile establishes a happens-before relationship ensuring thread writes are immediately flushed to main memory. It does NOT provide atomicity for compound operations like count++.",
+                        topic, diff);
+            }
+        }
+
+        // 6. OOP / INHERITANCE / POLYMORPHISM
+        if (t.contains("oop") || t.contains("inheritance") || t.contains("polymorphism")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output of the following Java code?\n\n```java\nclass Parent {\n    static void print() {\n        System.out.print(\"Parent \");\n    }\n}\nclass Child extends Parent {\n    static void print() {\n        System.out.print(\"Child \");\n    }\n}\npublic class Main {\n    public static void main(String[] args) {\n        Parent p = new Child();\n        p.print();\n    }\n}\n```",
+                        List.of("Parent ", "Child ", "Compilation Error", "ClassCastException"),
+                        "Parent ",
+                        "Static methods are not overridden in Java; they are hidden (method hiding). Static method resolution occurs at compile time based on the reference type (Parent), not the runtime instance (Child).",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "In Java, can an overriding method in a subclass declare a broader access modifier or throw broader checked exceptions?",
+                        List.of("Broader access is allowed, but broader checked exceptions are NOT allowed",
+                                "Broader checked exceptions are allowed, but broader access is NOT allowed",
+                                "Both broader access and broader checked exceptions are allowed",
+                                "Neither broader access nor broader checked exceptions are allowed"),
+                        "Broader access is allowed, but broader checked exceptions are NOT allowed",
+                        "Subclass overriding methods can broaden access (e.g. protected -> public) but cannot throw broader checked exceptions than those declared by the superclass method.",
+                        topic, diff);
+            }
+        }
+
+        // 7. JVM INTERNALS & MEMORY
+        if (t.contains("jvm") || t.contains("memory")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output of the following code regarding Java Integer cache?\n\n```java\npublic class Main {\n    public static void main(String[] args) {\n        Integer a = 100;\n        Integer b = 100;\n        Integer c = 200;\n        Integer d = 200;\n        System.out.println((a == b) + \" \" + (c == d));\n    }\n}\n```",
+                        List.of("true false", "true true", "false false", "false true"),
+                        "true false",
+                        "Java caches Integer objects between -128 and 127 via the IntegerCache. 100 is cached so (a == b) evaluates to true. 200 is outside the default cache range, creating distinct heap objects so (c == d) evaluates to false.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "Where are method local variables of primitive types allocated in the Java Virtual Machine?",
+                        List.of("On the thread's Stack frame",
+                                "In the Metaspace",
+                                "In the Eden generation of the Heap",
+                                "In the code cache"),
+                        "On the thread's Stack frame",
+                        "Local variables defined inside methods are allocated directly on the executing thread's JVM Stack frame and destroyed as soon as the method exits.",
+                        topic, diff);
+            }
+        }
+
+        // 8. INTERFACES & ABSTRACT CLASSES
+        if (t.contains("interface") || t.contains("abstract")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output of the following Java interface default method code?\n\n```java\ninterface A {\n    default void show() { System.out.print(\"A \"); }\n}\ninterface B {\n    default void show() { System.out.print(\"B \"); }\n}\nclass C implements A, B {\n    public void show() {\n        A.super.show();\n        System.out.print(\"C \");\n    }\n}\npublic class Main {\n    public static void main(String[] args) {\n        new C().show();\n    }\n}\n```",
+                        List.of("A C ", "B C ", "Compilation Error: Duplicate default method", "Runtime Ambiguity Exception"),
+                        "A C ",
+                        "When multiple interfaces provide conflicting default methods, the implementing class must explicitly override the method. C resolves conflict using A.super.show(), producing 'A C '.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "Which is a fundamental difference between an Abstract Class and an Interface in Java 8+?",
+                        List.of("An abstract class can maintain mutable instance state (instance fields); interfaces only allow public static final constants",
+                                "Interfaces cannot declare any method implementations",
+                                "A class can extend multiple abstract classes",
+                                "Abstract classes cannot have constructors"),
+                        "An abstract class can maintain mutable instance state (instance fields); interfaces only allow public static final constants",
+                        "Even with default and static methods in Java 8+, interfaces cannot declare instance variables (state). Abstract classes can have instance state and constructors.",
+                        topic, diff);
+            }
+        }
+
+        // 9. CONSTRUCTORS & OBJECT LIFECYCLE
+        if (t.contains("constructor") || t.contains("lifecycle")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output of the following Java code?\n\n```java\nclass Base {\n    Base() {\n        System.out.print(\"Base \");\n    }\n}\nclass Derived extends Base {\n    Derived() {\n        this(5);\n        System.out.print(\"DerivedDefault \");\n    }\n    Derived(int x) {\n        System.out.print(\"DerivedArg \" + x + \" \");\n    }\n}\npublic class Main {\n    public static void main(String[] args) {\n        new Derived();\n    }\n}\n```",
+                        List.of("Base DerivedArg 5 DerivedDefault ",
+                                "DerivedDefault DerivedArg 5 Base ",
+                                "Base DerivedDefault DerivedArg 5 ",
+                                "Compilation Error"),
+                        "Base DerivedArg 5 DerivedDefault ",
+                        "new Derived() invokes this(5). Derived(5) first invokes super() (printing 'Base '), then prints 'DerivedArg 5 '. Finally, the default constructor completes, printing 'DerivedDefault '.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "What happens if a Java class defines at least one parameterized constructor but does not declare a default no-arg constructor?",
+                        List.of("The Java compiler will NOT generate a default no-arg constructor",
+                                "The Java compiler automatically generates a no-arg constructor anyway",
+                                "Instantiation via reflection fails with a CompilerError",
+                                "The class automatically becomes abstract"),
+                        "The Java compiler will NOT generate a default no-arg constructor",
+                        "The compiler only provides a default no-argument constructor if NO constructors are explicitly defined in the class.",
+                        topic, diff);
+            }
+        }
+
+        // 10. GENERICS
+        if (t.contains("generic")) {
+            if (variant % 2 == 0) {
+                // Code output question (45%)
+                return createQuestion(uid,
+                        "What is the output or behavior of the following Java Generics code?\n\n```java\nimport java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        List<String> list1 = new ArrayList<>();\n        List<Integer> list2 = new ArrayList<>();\n        System.out.println(list1.getClass() == list2.getClass());\n    }\n}\n```",
+                        List.of("true (because of Java type erasure, both are java.util.ArrayList at runtime)",
+                                "false (List<String> and List<Integer> are distinct types)",
+                                "Compilation Error: Cannot compare distinct generic types",
+                                "Throws ClassCastException at runtime"),
+                        "true (because of Java type erasure, both are java.util.ArrayList at runtime)",
+                        "Java uses Type Erasure. Generic type parameters are erased at compile time. At runtime, both list1 and list2 are raw ArrayList instances.",
+                        topic, diff);
+            } else {
+                return createQuestion(uid,
+                        "What is the difference between `List<? extends Number>` and `List<? super Integer>` (PECS principle)?",
+                        List.of("`? extends Number` is a producer (read-only for numbers); `? super Integer` is a consumer (can write Integer values)",
+                                "`? extends Number` allows adding new Number instances; `? super Integer` does not",
+                                "They are completely interchangeable in method signatures",
+                                "`? super` is prohibited in method parameter definitions"),
+                        "`? extends Number` is a producer (read-only for numbers); `? super Integer` is a consumer (can write Integer values)",
+                        "PECS = Producer Extends, Consumer Super. You can read Numbers from List<? extends Number>, but cannot add elements. You can safely add Integers to List<? super Integer>.",
+                        topic, diff);
+            }
+        }
+
+        // DEFAULT / CORE JAVA
+        if (variant % 2 == 0) {
+            int a = random.nextInt(3, 8);
+            int b = a * 2;
+            return createQuestion(uid,
+                    "What is the output of evaluating the following Java expression?\n\n```java\npublic class Main {\n    public static void main(String[] args) {\n        int a = " + a + ";\n        int b = a++ + ++a * 2;\n        System.out.println(b);\n    }\n}\n```",
+                    List.of(String.valueOf(a + (a + 2) * 2),
+                            String.valueOf((a + 1) * 3),
+                            String.valueOf(a * 3),
+                            String.valueOf(b)),
+                    String.valueOf(a + (a + 2) * 2),
+                    "a++ evaluates to " + a + " and increments a to " + (a + 1) + ". Then ++a increments a to " + (a + 2) + " and evaluates to " + (a + 2) + ". Then " + (a + 2) + " * 2 = " + ((a + 2) * 2) + ". Sum = " + (a + (a + 2) * 2) + ".",
+                    topic, diff);
         } else {
-            // General Core Java & JVM
-            switch (variant % 3) {
-                case 0:
-                    int val1 = 100;
-                    int val2 = 200;
-                    return createQuestion(uid,
-                            "What does the following Java code print?\n\n```java\nInteger a = " + val1 + ", b = " + val1 + ";\nInteger c = " + val2 + ", d = " + val2 + ";\nSystem.out.println((a == b) + \" \" + (c == d));\n```",
-                            List.of("true false", "true true", "false false", "false true"),
-                            "true false",
-                            "Java caches Integer objects between -128 and 127 (IntegerCache). Values in this range share the same cached reference, so (a == b) is true. Values outside this range (like 200) create separate heap instances, so (c == d) is false.",
-                            Map.of("A", "Correct. a and b are cached by IntegerCache; c and d are separate heap objects.",
-                                    "B", "Incorrect. 200 exceeds the default IntegerCache upper bound of 127.",
-                                    "C", "Incorrect. 100 is within the -128 to 127 cached range.",
-                                    "D", "Incorrect. c == d cannot be true while a == b is false."),
-                            "Core Java", "jvm-internals", diff, exp, "Output-based",
-                            "Always use equals() for object wrapper equality comparisons, never ==.");
-                case 1:
-                    return createQuestion(uid,
-                            "What is the key advantage of `ZGC` (Z Garbage Collector) introduced in modern Java (JDK 17/21)?",
-                            List.of("Sub-millisecond maximum pause times regardless of heap size (from 8MB to 16TB)",
-                                    "Zero CPU overhead during collection cycles",
-                                    "It eliminates the need to allocate Java heap memory",
-                                    "It automatically fixes OutOfMemoryErrors at runtime"),
-                            "Sub-millisecond maximum pause times regardless of heap size (from 8MB to 16TB)",
-                            "ZGC performs all heavy GC work concurrently (concurrent marking, relocation, reference processing). Its maximum stop-the-world pause times are consistently below 1 millisecond.",
-                            Map.of("A", "Correct. ZGC delivers sub-millisecond pauses across massive heap sizes.",
-                                    "B", "Incorrect. Concurrent GC threads consume modest CPU cycles.",
-                                    "C", "Incorrect. All Java objects reside on the heap.",
-                                    "D", "Incorrect. ZGC cannot prevent OOM if heap memory is exhausted."),
-                            "JVM & Performance Tuning", "gc-algorithms", diff, exp, "Conceptual MCQ",
-                            "Highlighting Generational ZGC in Java 21 demonstrates up-to-date knowledge of modern Java runtime internals.");
-                default:
-                    return createQuestion(uid,
-                            "What happens when an exception is thrown in a `try` block, and the `finally` block also executes a `return` statement?",
-                            List.of("The exception is suppressed and silently swallowed; the finally return value is returned to the caller",
-                                    "The exception is thrown and the finally return statement is ignored",
-                                    "A MultipleReturnException is thrown at runtime",
-                                    "The code will fail to compile with an unreachable statement error"),
-                            "The exception is suppressed and silently swallowed; the finally return value is returned to the caller",
-                            "A return statement inside a finally block overrides any unhandled exception or previous return in the try/catch block, causing the exception to be silently discarded. This is considered an anti-pattern.",
-                            Map.of("A", "Correct. Returning from a finally block discards and swallows active exceptions.",
-                                    "B", "Incorrect. The finally return takes precedence over thrown exceptions.",
-                                    "C", "Incorrect. Java does not have a MultipleReturnException.",
-                                    "D", "Incorrect. The code compiles without error but violates clean coding practices."),
-                            "Exception Handling & Best Practices", "exception-hierarchy", diff, exp, "Interview trick questions",
-                            "Never place return or throw statements inside finally blocks; it hides severe application bugs.");
-            }
+            return createQuestion(uid,
+                    "In Java, what is the contract between `equals()` and `hashCode()`?",
+                    List.of("If two objects are equal according to equals(), they MUST have the same hashCode()",
+                            "If two objects have the same hashCode(), they MUST be equal according to equals()",
+                            "hashCode() must always return a unique positive integer for every object",
+                            "Overriding equals() does not require overriding hashCode()"),
+                    "If two objects are equal according to equals(), they MUST have the same hashCode()",
+                    "If o1.equals(o2) is true, then o1.hashCode() == o2.hashCode() is strictly mandatory so hash-based collections (HashMap, HashSet) function correctly.",
+                    topic, diff);
         }
     }
 
-    public List<Question> getCuratedQuestionBank() {
-        List<Question> list = new ArrayList<>();
-
-        // 1. Core Java - String Pool
-        list.add(createQuestion(
-                "q_java_01",
-                "What is the output of the following Java snippet?\n\n```java\nString s1 = \"prepforge\";\nString s2 = new String(\"prepforge\");\nString s3 = s2.intern();\nSystem.out.println((s1 == s2) + \" \" + (s1 == s3));\n```",
-                List.of("false true", "true true", "false false", "true false"),
-                "false true",
-                "s1 points to the string literal in the String Pool. s2 is created in heap memory, so (s1 == s2) evaluates to false. Calling s2.intern() returns the canonical reference from the String Pool, identical to s1, making (s1 == s3) true.",
-                Map.of("A", "Correct. s2 is on the heap, but s2.intern() returns the pooled reference matching s1.",
-                        "B", "Incorrect. new String() always creates a separate heap instance.",
-                        "C", "Incorrect. s1 == s3 is true due to string pooling.",
-                        "D", "Incorrect. s1 == s2 cannot be true."),
-                "Core Java", "jvm-internals", "Medium", "1-2 years", "Output-based",
-                "Interviewers love asking about String Constant Pool and intern() to test understanding of heap allocation versus string pooling."
-        ));
-
-        // 2. Core Java - Equals & HashCode
-        list.add(createQuestion(
-                "q_java_02",
-                "Why is it strongly recommended to override `hashCode()` whenever `equals()` is overridden in Java?",
-                List.of("To fulfill the general contract so that equal objects produce equal hash codes in hash-based collections",
-                        "To prevent compilation errors when defining custom classes",
-                        "To ensure objects are placed into the exact same LinkedList bucket inside HashMap",
-                        "To improve the garbage collection cycle performance of the object"),
-                "To fulfill the general contract so that equal objects produce equal hash codes in hash-based collections",
-                "According to the Java Object contract: if two objects are equal according to equals(Object), calling hashCode() on each must produce the same integer result. If violated, HashMap cannot reliably retrieve objects.",
-                Map.of("A", "Correct. The Object contract guarantees that equal objects must have identical hash codes.",
-                        "B", "Incorrect. Overriding equals() without hashCode() compiles without error.",
-                        "C", "Incorrect. The goal of hashing is even distribution across buckets.",
-                        "D", "Incorrect. hashCode() has no relation to garbage collection cycles."),
-                "Core Java", "java-syntax", "Medium", "1-2 years", "Conceptual MCQ",
-                "Always mention that violating the equals/hashCode contract causes HashMap.get() to return null even when a matching key exists."
-        ));
-
-        // 3. Collections - HashMap Treeify
-        list.add(createQuestion(
-                "q_col_01",
-                "In Java 8+, what condition causes a `HashMap` bucket to transition from a LinkedList to a Balanced Red-Black Tree (Treeify)?",
-                List.of("When bucket entries reach TREEIFY_THRESHOLD (8) AND table capacity is at least MIN_TREEIFY_CAPACITY (64)",
-                        "When the total number of elements in the HashMap exceeds 64",
-                        "Whenever any single hash collision occurs",
-                        "When the load factor exceeds 0.75"),
-                "When bucket entries reach TREEIFY_THRESHOLD (8) AND table capacity is at least MIN_TREEIFY_CAPACITY (64)",
-                "When a bucket has 8 elements and the table capacity is at least 64, the bucket transforms into a Red-Black Tree, improving worst-case search time complexity from O(n) to O(log n). If table capacity is less than 64, it resizes the table instead.",
-                Map.of("A", "Correct. Both conditions must be met: bucket length >= 8 AND array capacity >= 64.",
-                        "B", "Incorrect. Exceeding 64 elements triggers table resizing based on load factor.",
-                        "C", "Incorrect. Collisions initially chain into a linked list.",
-                        "D", "Incorrect. Load factor 0.75 determines when table capacity doubles."),
-                "Java Collections Framework", "hashmap-internals", "Hard", "2-3 years", "Conceptual MCQ",
-                "Highlighting the worst-case time complexity transition from O(N) to O(log N) demonstrates senior-level knowledge of Java internals."
-        ));
-
-        // 4. Multithreading - volatile semantics
-        list.add(createQuestion(
-                "q_multi_01",
-                "What memory guarantee is provided by the `volatile` keyword in Java?",
-                List.of("Guarantees visibility across threads and establishes a happens-before relationship, but does NOT guarantee atomicity for compound operations",
-                        "Guarantees atomicity for all operations including increments like count++",
-                        "Acquires an exclusive monitor lock on the object",
-                        "Prevents the thread from being preempted by the OS scheduler"),
-                "Guarantees visibility across threads and establishes a happens-before relationship, but does NOT guarantee atomicity for compound operations",
-                "volatile ensures reads and writes go directly to main memory and prevents compiler/CPU instruction reordering. However, compound read-modify-write operations like count++ are not atomic.",
-                Map.of("A", "Correct. volatile provides visibility and memory ordering, but not atomicity for compound operations.",
-                        "B", "Incorrect. count++ requires synchronization or AtomicInteger for atomicity.",
-                        "C", "Incorrect. volatile does not use monitor locks.",
-                        "D", "Incorrect. volatile has no control over OS thread scheduling."),
-                "Multithreading & Concurrency", "locks-volatiles", "Medium", "1-2 years", "Conceptual MCQ",
-                "A classic interview question: explain why two threads incrementing a volatile int 10,000 times result in a value less than 20,000."
-        ));
-
-        // 5. Spring Boot - Auto-configuration
-        list.add(createQuestion(
-                "q_spring_01",
-                "How does Spring Boot's `@ConditionalOnMissingBean` annotation assist in writing robust microservice libraries?",
-                List.of("It provides a default bean implementation while allowing application developers to override it by defining their own bean",
-                        "It prevents circular dependencies between beans",
-                        "It forces Spring to initialize the bean as a prototype",
-                        "It validates that required environment variables are non-null"),
-                "It provides a default bean implementation while allowing application developers to override it by defining their own bean",
-                "@ConditionalOnMissingBean tells Spring Boot to register the autoconfigured bean ONLY if the user has not already defined a bean of that type, enabling seamless custom overriding.",
-                Map.of("A", "Correct. Auto-configuration uses @ConditionalOnMissingBean to let user configurations take precedence.",
-                        "B", "Incorrect. Circular dependencies are handled via design refactoring or @Lazy.",
-                        "C", "Incorrect. Scope is defined by @Scope.",
-                        "D", "Incorrect. Configuration properties validation uses @Validated."),
-                "Spring Boot", "auto-configuration", "Medium", "1-2 years", "Best-practice",
-                "Mention that custom Spring Boot starters use @ConditionalOnMissingBean so developers can easily customize behavior."
-        ));
-
-        // 6. Spring Security - FilterChain
-        list.add(createQuestion(
-                "q_sec_01",
-                "In Spring Security 6+ (Spring Boot 3+), how is HTTP security configured without extending deprecated adapter classes?",
-                List.of("By registering a `@Bean` returning a `SecurityFilterChain`",
-                        "By extending `WebSecurityConfigurerAdapter`",
-                        "By configuring web.xml with security constraints",
-                        "By defining security policies inside application.properties only"),
-                "By registering a `@Bean` returning a `SecurityFilterChain`",
-                "Spring Security 5.7+ deprecated WebSecurityConfigurerAdapter. In Spring Boot 3, security is configured component-style by defining a SecurityFilterChain @Bean taking HttpSecurity.",
-                Map.of("A", "Correct. The modern standard is a @Bean returning SecurityFilterChain.",
-                        "B", "Incorrect. WebSecurityConfigurerAdapter was deprecated and completely removed in Spring Security 6.",
-                        "C", "Incorrect. web.xml is obsolete in modern Spring Boot applications.",
-                        "D", "Incorrect. Complete security policies cannot be configured solely via properties."),
-                "Spring Security & JWT", "filter-chain", "Medium", "1-2 years", "Best-practice",
-                "Highlighting the shift from inheritance (WebSecurityConfigurerAdapter) to composition (SecurityFilterChain bean) shows current knowledge."
-        ));
-
-        return list;
+    private int computeStreamResult(int start) {
+        int sum = 0;
+        int[] vals = new int[]{start, start + 1, start + 2, start + 3};
+        for (int v : vals) {
+            if (v % 2 != 0) sum += v * 2;
+        }
+        return sum;
     }
 
     private Question createQuestion(
@@ -577,13 +396,8 @@ public class QuestionBankService {
             List<String> options,
             String correctAnswer,
             String explanation,
-            Map<String, String> optionExplanations,
             String topic,
-            String subTopic,
-            String difficulty,
-            String experienceLevel,
-            String questionType,
-            String interviewTip
+            String difficulty
     ) {
         return Question.builder()
                 .id(id)
@@ -594,5 +408,74 @@ public class QuestionBankService {
                 .topic(topic)
                 .difficulty(difficulty)
                 .build();
+    }
+
+    public List<Question> getCuratedQuestionBank() {
+        List<Question> list = new ArrayList<>();
+
+        // 1. Exception Handling
+        list.add(createQuestion(
+                "q_cur_exc_01",
+                "What is the output of the following Java code?\n\n```java\nclass Resource implements AutoCloseable {\n    public void close() throws Exception {\n        throw new Exception(\"Close Exception\");\n    }\n}\npublic class Main {\n    public static void main(String[] args) {\n        try (Resource r = new Resource()) {\n            throw new Exception(\"Try Exception\");\n        } catch (Exception e) {\n            System.out.println(e.getMessage() + \" : \" + e.getSuppressed()[0].getMessage());\n        }\n    }\n}\n```",
+                List.of("Try Exception : Close Exception", "Close Exception : Try Exception", "Close Exception", "Compilation Error"),
+                "Try Exception : Close Exception",
+                "In try-with-resources, the primary exception thrown in the try block takes precedence. The exception thrown by close() is added as a suppressed exception accessible via e.getSuppressed().",
+                "Exception Handling", "Medium"
+        ));
+
+        // 2. Collections
+        list.add(createQuestion(
+                "q_cur_col_01",
+                "What is the output of the following Java Collections code?\n\n```java\nimport java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        List<String> list = new ArrayList<>(Arrays.asList(\"A\", \"B\", \"C\", \"D\"));\n        for (Iterator<String> it = list.iterator(); it.hasNext(); ) {\n            String s = it.next();\n            if (s.equals(\"B\")) {\n                it.remove();\n            }\n        }\n        System.out.println(String.join(\",\", list));\n    }\n}\n```",
+                List.of("A,C,D", "ConcurrentModificationException is thrown", "A,B,C,D", "A,C"),
+                "A,C,D",
+                "Removing elements via Iterator.remove() safely mutates the underlying list and updates the iterator's expectedModCount, avoiding ConcurrentModificationException.",
+                "Java Collections Framework", "Medium"
+        ));
+
+        // 3. Streams
+        list.add(createQuestion(
+                "q_cur_stm_01",
+                "What is the output of the following Java code?\n\n```java\nimport java.util.*;\nimport java.util.stream.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        List<String> items = Arrays.asList(\"apple\", \"banana\", \"pear\");\n        long count = items.stream()\n            .peek(s -> System.out.print(s.length() + \" \"))\n            .count();\n        System.out.print(\"Count:\" + count);\n    }\n}\n```",
+                List.of("Count:3 (in Java 9+, count() may skip peek() stream stages)",
+                        "5 6 4 Count:3",
+                        "Compilation Error",
+                        "Count:0"),
+                "Count:3 (in Java 9+, count() may skip peek() stream stages)",
+                "In Java 9+, Stream.count() is optimized to return the known collection size directly without traversing the pipeline, meaning intermediate operations like peek() are omitted.",
+                "Streams API", "Hard"
+        ));
+
+        // 4. Multithreading
+        list.add(createQuestion(
+                "q_cur_thr_01",
+                "What is the output of the following Java Concurrency code?\n\n```java\nimport java.util.concurrent.atomic.AtomicInteger;\n\npublic class Main {\n    public static void main(String[] args) {\n        AtomicInteger val = new AtomicInteger(10);\n        boolean updated = val.compareAndSet(10, 20);\n        boolean updatedAgain = val.compareAndSet(10, 30);\n        System.out.println(updated + \" \" + updatedAgain + \" \" + val.get());\n    }\n}\n```",
+                List.of("true false 20", "true true 30", "false false 10", "true false 10"),
+                "true false 20",
+                "The first compareAndSet(10, 20) succeeds because the current value is 10, updating it to 20. The second compareAndSet(10, 30) fails because the current value is now 20.",
+                "Multithreading & Concurrency", "Medium"
+        ));
+
+        // 5. Strings & Immutability
+        list.add(createQuestion(
+                "q_cur_str_01",
+                "What is the output of the following Java String code?\n\n```java\npublic class Main {\n    public static void main(String[] args) {\n        String a = \"Hello\";\n        String b = \"Hello\";\n        String c = new String(\"Hello\");\n        System.out.println((a == b) + \" \" + (a == c));\n    }\n}\n```",
+                List.of("true false", "true true", "false false", "false true"),
+                "true false",
+                "String literals 'Hello' are canonicalized in the String Constant Pool, so (a == b) is true. new String() creates a distinct object on the heap, so (a == c) is false.",
+                "Strings & Immutability", "Easy"
+        ));
+
+        // 6. OOP & Dynamic Dispatch
+        list.add(createQuestion(
+                "q_cur_oop_01",
+                "What is the output of the following Java inheritance code?\n\n```java\nclass Alpha {\n    int val = 10;\n    void show() { System.out.print(\"A:\" + val + \" \"); }\n}\nclass Beta extends Alpha {\n    int val = 20;\n    void show() { System.out.print(\"B:\" + val + \" \"); }\n}\npublic class Main {\n    public static void main(String[] args) {\n        Alpha obj = new Beta();\n        System.out.print(obj.val + \" \");\n        obj.show();\n    }\n}\n```",
+                List.of("10 B:20 ", "20 B:20 ", "10 A:10 ", "20 A:10 "),
+                "10 B:20 ",
+                "In Java, instance variables are NOT polymorphic and are resolved at compile time using the reference type (Alpha.val = 10). Methods are dynamically dispatched at runtime (Beta.show() = B:20).",
+                "Inheritance & Polymorphism", "Hard"
+        ));
+
+        return list;
     }
 }

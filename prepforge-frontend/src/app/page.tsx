@@ -36,7 +36,7 @@ const EXPERIENCE_OPTIONS: { id: ExperienceLevel; label: string; desc: string }[]
   { id: "Advanced", label: "Advanced", desc: "Deep internals, concurrency, optimization" },
 ];
 
-const QUESTION_COUNTS = [5, 10, 15, 20, 30];
+const QUESTION_COUNTS = [5, 10, 20, 30, 40, 50];
 
 export default function HomePage() {
   const router = useRouter();
@@ -261,7 +261,7 @@ export default function HomePage() {
               </span>
             </div>
 
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               {QUESTION_COUNTS.map((cnt) => {
                 const isSelected = questionCount === cnt;
                 return (

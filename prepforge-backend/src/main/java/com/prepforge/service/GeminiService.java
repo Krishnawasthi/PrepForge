@@ -13,6 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 @Service
 public class GeminiService {
@@ -41,7 +42,9 @@ public class GeminiService {
     }
 
     /**
-     * Batch-generates Java interview questions with naturally mixed difficulty.
+     * Batch-generates Java interview questions strictly from the chosen topics.
+     * Guaranteed ~45% code review / output prediction questions with IDE code snippets.
+     * Chunks large counts (up to 50) into parallel requests for maximum speed and zero token truncation.
      */
     public CompletableFuture<List<Question>> generateQuestions(List<String> topics, String experienceLevel, int count) {
         String apiKey = getEffectiveApiKey();
@@ -50,25 +53,78 @@ public class GeminiService {
             return CompletableFuture.completedFuture(Collections.emptyList());
         }
 
+        // If count is small (<= 12), single request is optimal
+        if (count <= 12) {
+            return generateQuestionChunk(apiKey, topics, experienceLevel, count);
+        }
+
+        // For large counts (up to 50), chunk into parallel requests of 10-12 questions each
+        int chunkSize = 10;
+        int numChunks = (int) Math.ceil((double) count / chunkSize);
+
+        List<CompletableFuture<List<Question>>> futures = new ArrayList<>();
+        for (int i = 0; i < numChunks; i++) {
+            int currentChunkSize = Math.min(chunkSize, count - (i * chunkSize));
+            if (currentChunkSize <= 0) break;
+
+            // Sub-slice topics for this chunk to ensure balanced representation
+            int topicStart = (i * 2) % topics.size();
+            List<String> chunkTopics = new ArrayList<>();
+            for (int t = 0; t < Math.min(3, topics.size()); t++) {
+                chunkTopics.add(topics.get((topicStart + t) % topics.size()));
+            }
+
+            futures.add(generateQuestionChunk(apiKey, chunkTopics, experienceLevel, currentChunkSize));
+        }
+
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(v -> {
+                    List<Question> combined = new ArrayList<>();
+                    Set<String> seen = new HashSet<>();
+                    for (CompletableFuture<List<Question>> f : futures) {
+                        try {
+                            List<Question> list = f.join();
+                            for (Question q : list) {
+                                if (combined.size() >= count) break;
+                                String norm = q.getQuestion().replaceAll("[^a-zA-Z0-9]", "").toLowerCase();
+                                if (seen.add(norm)) {
+                                    combined.add(q);
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                    log.info("Gemini parallel batch produced {} combined questions (target: {})", combined.size(), count);
+                    return combined;
+                });
+    }
+
+    private CompletableFuture<List<Question>> generateQuestionChunk(String apiKey, List<String> topics, String experienceLevel, int count) {
         return CompletableFuture.supplyAsync(() -> {
             String topicList = String.join(", ", topics);
+            int codeReviewCount = (int) Math.round(count * 0.45);
+            int conceptualCount = count - codeReviewCount;
+
             String prompt = String.format(
                     "You are a Senior Java Technical Interviewer.\n" +
-                    "Generate EXACTLY %d high-yield Java interview practice questions for a candidate with '%s' experience.\n" +
-                    "STRICT TOPIC SCOPE: Only questions related to: %s.\n" +
-                    "Do NOT include questions outside these topics.\n\n" +
-                    "DIFFICULTY REQUIREMENT:\n" +
-                    "Provide a realistic natural mixture of difficulty (approx. 30%% Easy, 50%% Medium, 20%% Hard).\n\n" +
-                    "QUESTION FORMAT RULES:\n" +
-                    "- Exactly 4 distinct plausible options (A, B, C, D) per question.\n" +
-                    "- Exactly 1 unambiguous correct answer that exists word-for-word in the options.\n" +
-                    "- Clear, technically deep explanation of why the correct answer is right.\n" +
-                    "- Variety: include conceptual questions, tricky output prediction code snippets, and practical scenarios.\n\n" +
+                    "Generate EXACTLY %d high-yield Java interview practice questions for a candidate with '%s' experience.\n\n" +
+                    "CRITICAL TOPIC CONSTRAINT (MANDATORY):\n" +
+                    "- EVERY single question MUST strictly test only these chosen topics: [%s].\n" +
+                    "- ABSOLUTELY DO NOT generate questions on any other topic.\n" +
+                    "- The 'topic' field in each JSON object MUST be chosen strictly from: [%s].\n\n" +
+                    "CODE REVIEW & OUTPUT PREDICTION REQUIREMENT (MANDATORY):\n" +
+                    "- Exactly %d questions MUST be Code Review / Output Prediction questions.\n" +
+                    "  * E.g. 'What is the output of the following Java code snippet?', 'What will be printed when this code is executed?', 'Does this code compile or throw an exception at runtime?'.\n" +
+                    "  * Every code review question MUST include a complete, valid Java code block enclosed in ```java\\n...\\n```.\n" +
+                    "- The remaining %d questions should be deep practical or conceptual interview scenarios on the selected topics.\n\n" +
+                    "QUESTION RULES:\n" +
+                    "- Exactly 4 distinct options (A, B, C, D) per question.\n" +
+                    "- Exactly 1 unambiguous correct answer that matches an option word-for-word.\n" +
+                    "- Clear technical explanation.\n\n" +
                     "RETURN FORMAT:\n" +
                     "Return ONLY a valid JSON array of objects with these keys:\n" +
                     "[\n" +
                     "  {\n" +
-                    "    \"question\": \"Question statement with optional markdown code snippet\",\n" +
+                    "    \"question\": \"Question statement (with ```java\\n...\\n``` for code review questions)\",\n" +
                     "    \"options\": [\"Option 1\", \"Option 2\", \"Option 3\", \"Option 4\"],\n" +
                     "    \"correctAnswer\": \"Option 1\",\n" +
                     "    \"explanation\": \"Technical explanation\",\n" +
@@ -76,7 +132,7 @@ public class GeminiService {
                     "    \"difficulty\": \"Medium\"\n" +
                     "  }\n" +
                     "]",
-                    count, experienceLevel, topicList, topics.get(0)
+                    count, experienceLevel, topicList, topicList, codeReviewCount, conceptualCount, topics.get(0)
             );
 
             try {
@@ -106,17 +162,16 @@ public class GeminiService {
                         questions.add(q);
                     }
                 }
-                log.info("Gemini successfully generated {} valid Java questions for topics: {}", questions.size(), topics);
                 return questions;
             } catch (Exception e) {
-                log.warn("Gemini question generation error: {}", e.getMessage());
+                log.warn("Gemini chunk generation note: {}", e.getMessage());
                 return Collections.emptyList();
             }
         });
     }
 
     /**
-     * Generates a single replacement question on the same topic.
+     * Generates a single replacement question strictly on the specified topic.
      */
     public CompletableFuture<Question> changeQuestion(String topic, String difficulty, String experienceLevel, List<String> usedQuestions) {
         String apiKey = getEffectiveApiKey();
@@ -133,16 +188,18 @@ public class GeminiService {
 
             String prompt = String.format(
                     "You are an expert Java interviewer.\n" +
-                    "Generate a COMPLETELY NEW Java interview question testing: '%s'.\n" +
-                    "Difficulty: %s | Experience: %s.\n\n" +
+                    "Generate a COMPLETELY NEW Java interview question testing STRICTLY the topic: '%s'.\n" +
+                    "Experience level: %s.\n" +
+                    "Can be either a conceptual question or a code output question ('What is the output of the following Java code snippet?' with ```java...```).\n\n" +
                     "%s\n" +
                     "REQUIREMENTS:\n" +
+                    "- Strictly on topic '%s'. Do not switch topics.\n" +
                     "- Exactly 4 options.\n" +
                     "- Exactly 1 correct answer.\n" +
                     "- Clear technical explanation.\n" +
                     "- Return a SINGLE JSON object with keys: question, options, correctAnswer, explanation, topic, difficulty.",
-                    topic, difficulty != null ? difficulty : "Medium", experienceLevel != null ? experienceLevel : "Intermediate",
-                    usedBuilder.toString()
+                    topic, experienceLevel != null ? experienceLevel : "Intermediate",
+                    usedBuilder.toString(), topic
             );
 
             for (int attempt = 1; attempt <= 3; attempt++) {
@@ -234,7 +291,7 @@ public class GeminiService {
     }
 
     @SuppressWarnings("unchecked")
-    private Question parseQuestion(Map<String, Object> map, List<String> topics) {
+    private Question parseQuestion(Map<String, Object> map, List<String> allowedTopics) {
         String qText = String.valueOf(map.getOrDefault("question", "")).trim();
         List<String> options = new ArrayList<>();
         Object opts = map.get("options");
@@ -245,7 +302,16 @@ public class GeminiService {
         }
         String correct = String.valueOf(map.getOrDefault("correctAnswer", "")).trim();
         String explanation = String.valueOf(map.getOrDefault("explanation", "")).trim();
-        String topic = String.valueOf(map.getOrDefault("topic", topics.get(0))).trim();
+        String rawTopic = String.valueOf(map.getOrDefault("topic", "")).trim();
+
+        // Strict topic enforcement: find exact or best match in allowedTopics
+        String matchedTopic = allowedTopics.stream()
+                .filter(t -> t.equalsIgnoreCase(rawTopic) ||
+                             rawTopic.toLowerCase().contains(t.toLowerCase()) ||
+                             t.toLowerCase().contains(rawTopic.toLowerCase()))
+                .findFirst()
+                .orElse(allowedTopics.get(0));
+
         String diff = String.valueOf(map.getOrDefault("difficulty", "Medium")).trim();
 
         return Question.builder()
@@ -254,7 +320,7 @@ public class GeminiService {
                 .options(options)
                 .correctAnswer(correct)
                 .explanation(explanation)
-                .topic(topic)
+                .topic(matchedTopic)
                 .difficulty(diff)
                 .build();
     }

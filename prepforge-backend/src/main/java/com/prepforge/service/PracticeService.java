@@ -72,11 +72,11 @@ public class PracticeService {
         // 1. Fetch questions from Gemini
         try {
             List<Question> aiQuestions = geminiService.generateQuestions(topics, exp, targetCount)
-                    .get(30, java.util.concurrent.TimeUnit.SECONDS);
+                    .get(45, java.util.concurrent.TimeUnit.SECONDS);
 
             for (Question q : aiQuestions) {
                 if (collected.size() >= targetCount) break;
-                if (seenQuestions.add(normalizeText(q.getQuestion()))) {
+                if (isTopicAllowed(q.getTopic(), topics) && seenQuestions.add(normalizeText(q.getQuestion()))) {
                     collected.add(q);
                 }
             }
@@ -84,28 +84,28 @@ public class PracticeService {
             log.warn("Gemini batch generation note: {}. Using question bank.", e.getMessage());
         }
 
-        // 2. Fill remaining from diverse question bank
+        // 2. Fill remaining from diverse question bank strictly for selected topics
         if (collected.size() < targetCount) {
             int needed = targetCount - collected.size();
             List<Question> bankQuestions = questionBankService.generateDynamicJavaQuestions(topics, exp, "Medium", needed);
             for (Question q : bankQuestions) {
                 if (collected.size() >= targetCount) break;
-                if (seenQuestions.add(normalizeText(q.getQuestion()))) {
+                if (isTopicAllowed(q.getTopic(), topics) && seenQuestions.add(normalizeText(q.getQuestion()))) {
                     collected.add(q);
                 }
             }
         }
 
-        // 3. Fallback synthesis if still short
+        // 3. Fallback synthesis strictly for selected topics if still short
         int seed = 1;
         while (collected.size() < targetCount) {
             String topic = topics.get(collected.size() % topics.size());
             Question extra = questionBankService.createAlgorithmicOutputQuestion(topic, "Medium", exp);
-            if (seenQuestions.add(normalizeText(extra.getQuestion()))) {
+            if (isTopicAllowed(extra.getTopic(), topics) && seenQuestions.add(normalizeText(extra.getQuestion()))) {
                 collected.add(extra);
             }
             seed++;
-            if (seed > 100) break;
+            if (seed > 200) break;
         }
 
         // Cache & persist questions
@@ -432,5 +432,17 @@ public class PracticeService {
     private String normalizeText(String text) {
         if (text == null) return "";
         return text.toLowerCase().replaceAll("[^a-z0-9]", "").trim();
+    }
+
+    private boolean isTopicAllowed(String questionTopic, List<String> allowedTopics) {
+        if (questionTopic == null || allowedTopics == null || allowedTopics.isEmpty()) return false;
+        for (String allowed : allowedTopics) {
+            if (allowed.equalsIgnoreCase(questionTopic) ||
+                allowed.toLowerCase().contains(questionTopic.toLowerCase()) ||
+                questionTopic.toLowerCase().contains(allowed.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

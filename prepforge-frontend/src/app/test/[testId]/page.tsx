@@ -271,11 +271,6 @@ export default function PracticeTestPage() {
               <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-md">
                 {currentQ.topic}
               </span>
-              {currentQ.difficulty && (
-                <span className="text-[11px] font-semibold text-slate-500">
-                  {currentQ.difficulty}
-                </span>
-              )}
             </div>
 
             {/* Question Text with IDE Code Formatter */}
