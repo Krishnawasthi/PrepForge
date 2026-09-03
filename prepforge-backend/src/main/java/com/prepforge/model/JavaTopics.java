@@ -24,9 +24,19 @@ public final class JavaTopics {
 
     static {
         TOPIC_SUBTOPICS.put("Core Java", List.of(
-                "Java features", "JDK, JRE, JVM differences", "JVM architecture",
-                "Bytecode", "Compilation vs execution", "main() method",
-                "Packages", "Imports", "Naming conventions"
+                "Static block vs Instance initialization block vs Constructor execution order",
+                "Object creation and memory layout (Heap vs Stack reference)",
+                "Primitive data types, type casting (widening vs narrowing), compound assignment traps (e.g. byte b += 1)",
+                "Operator precedence, short-circuit evaluation side-effects, shift operators (<<, >>, >>>)",
+                "Method overloading resolution (widening vs autoboxing vs varargs precedence)",
+                "Wrapper classes caching (IntegerCache -128 to 127) and reference == comparisons",
+                "String constant pool, String immutability, intern() mechanics, StringBuilder vs StringBuffer",
+                "static vs instance members, static method hiding, blank final variables",
+                "Object class contracts (equals(), hashCode(), clone(), toString())",
+                "Access modifiers across packages and subclass boundaries (protected visibility)",
+                "Anonymous inner classes, local inner classes, effectively final variable captures",
+                "JVM architecture (Stack, Heap, Metaspace, ClassLoader, GC lifecycle)",
+                "main() method nuances, packages, imports, naming conventions"
         ));
 
         TOPIC_SUBTOPICS.put("Data Types & Variables", List.of(

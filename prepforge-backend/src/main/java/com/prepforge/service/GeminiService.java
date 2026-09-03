@@ -107,10 +107,12 @@ public class GeminiService {
 
             // Build subtopic taxonomy block for each selected topic
             String subtopicBlock = JavaTopics.getSubtopicPromptBlock(topics);
+            String experienceGuidance = buildExperienceGuidance(experienceLevel);
 
             String prompt = String.format(
-                    "You are a Senior Java Technical Interviewer.\n" +
+                    "You are a Principal Java Technical Interviewer and JVM Specialist.\n" +
                     "Generate EXACTLY %d high-yield Java interview practice questions for a candidate with '%s' experience.\n\n" +
+                    "%s\n\n" +
                     "CRITICAL TOPIC CONSTRAINT (MANDATORY):\n" +
                     "- EVERY single question MUST strictly test only these chosen topics: [%s].\n" +
                     "- ABSOLUTELY DO NOT generate questions on any other topic.\n" +
@@ -122,14 +124,13 @@ public class GeminiService {
                     "Topic → Subtopics:\n%s\n" +
                     "Spread questions evenly across these subtopics. Each question should test a DIFFERENT subtopic/concept.\n\n" +
                     "CODE REVIEW & OUTPUT PREDICTION REQUIREMENT (MANDATORY):\n" +
-                    "- Exactly %d questions MUST be Code Review / Output Prediction questions.\n" +
-                    "  * E.g. 'What is the output of the following Java code snippet?', 'What will be printed when this code is executed?', 'Does this code compile or throw an exception at runtime?'.\n" +
-                    "  * Every code review question MUST include a complete, valid Java code block enclosed in ```java\\n...\\n```.\n" +
+                    "- Exactly %d questions MUST be Code Review / Output Prediction questions ('What is the output of the following Java code snippet?', 'What will be printed when executed?').\n" +
+                    "- Every code review question MUST include a complete, valid Java code block enclosed in ```java\\n...\\n```.\n" +
                     "- The remaining %d questions should be deep practical or conceptual interview scenarios on the selected subtopics.\n\n" +
                     "QUESTION RULES:\n" +
                     "- Exactly 4 distinct options (A, B, C, D) per question.\n" +
                     "- Exactly 1 unambiguous correct answer that matches an option word-for-word.\n" +
-                    "- Clear technical explanation.\n" +
+                    "- Clear, in-depth technical explanation of why the answer is correct and why common misconceptions fail.\n" +
                     "- NEVER repeat a question. Every question must test a different concept.\n\n" +
                     "RETURN FORMAT:\n" +
                     "Return ONLY a valid JSON array of objects with these keys:\n" +
@@ -140,10 +141,12 @@ public class GeminiService {
                     "    \"correctAnswer\": \"Option 1\",\n" +
                     "    \"explanation\": \"Technical explanation\",\n" +
                     "    \"topic\": \"%s\",\n" +
-                    "    \"difficulty\": \"Medium\"\n" +
+                    "    \"difficulty\": \"Hard\"\n" +
                     "  }\n" +
                     "]",
-                    count, experienceLevel, topicList, topicList,
+                    count, experienceLevel,
+                    experienceGuidance,
+                    topicList, topicList,
                     subtopicBlock,
                     codeReviewCount, conceptualCount, topics.get(0)
             );
@@ -204,13 +207,14 @@ public class GeminiService {
             String subtopicHint = subtopics.isEmpty() ? "" :
                     "Available subtopics for '" + topic + "': " + String.join(", ", subtopics) +
                     "\nPick a subtopic that was NOT already tested in the previous questions.\n\n";
+            String experienceGuidance = buildExperienceGuidance(experienceLevel);
 
             String prompt = String.format(
-                    "You are an expert Java interviewer.\n" +
-                    "Generate a COMPLETELY NEW Java interview question testing STRICTLY the topic: '%s'.\n" +
-                    "Experience level: %s.\n" +
+                    "You are a Principal Java Technical Interviewer.\n" +
+                    "Generate a COMPLETELY NEW Java interview question testing STRICTLY the topic: '%s'.\n\n" +
+                    "%s\n\n" +
                     "%s" +
-                    "Can be either a conceptual question or a code output question ('What is the output of the following Java code snippet?' with ```java...```).\n\n" +
+                    "Can be either a conceptual question or a tricky code output question ('What is the output of the following Java code snippet?' with ```java...```).\n\n" +
                     "%s" +
                     "REQUIREMENTS:\n" +
                     "- Strictly on topic '%s'. Do not switch topics.\n" +
@@ -219,7 +223,8 @@ public class GeminiService {
                     "- Exactly 1 correct answer.\n" +
                     "- Clear technical explanation.\n" +
                     "- Return a SINGLE JSON object with keys: question, options, correctAnswer, explanation, topic, difficulty.",
-                    topic, experienceLevel != null ? experienceLevel : "Intermediate",
+                    topic,
+                    experienceGuidance,
                     subtopicHint,
                     usedBuilder.toString(), topic
             );
@@ -353,5 +358,26 @@ public class GeminiService {
         if (q.getOptions() == null || q.getOptions().size() != 4) return false;
         if (q.getCorrectAnswer() == null || q.getCorrectAnswer().isBlank()) return false;
         return q.getOptions().contains(q.getCorrectAnswer());
+    }
+
+    private String buildExperienceGuidance(String exp) {
+        String level = (exp != null) ? exp.trim().toLowerCase() : "intermediate";
+        if (level.contains("adv")) {
+            return "EXPERIENCE LEVEL: ADVANCED / SENIOR STAFF LEVEL (MANDATORY):\n" +
+                    "- Questions MUST be genuinely DIFFICULT, TRICKY, nuanced, and intellectually rigorous.\n" +
+                    "- Strictly AVOID basic recall or surface-level definition questions (e.g. do NOT ask 'What is an interface?' or 'What is a class?').\n" +
+                    "- FOR PREDICT THE OUTPUT / CODE REVIEW QUESTIONS (~45% of total):\n" +
+                    "  * Code snippets MUST test subtle Java edge cases, compiler tricks, and JVM runtime semantics.\n" +
+                    "  * Emphasize tricky scenarios: static vs instance block initialization order in inheritance hierarchies, method overload resolution (widening vs boxing vs varargs precedence and ambiguous calls), try-catch-finally return overrides & suppressed exception chaining, String constant pool reference equality vs new String() vs intern(), IntegerCache (-128..127) vs object references, variable shadowing vs dynamic method dispatch, anonymous inner class effectively-final variable captures, volatile array non-volatility of elements, stream lazy evaluation mutations / parallel stream race conditions, bitwise shift overflow with byte/short promotions, and generic type erasure bridge methods.\n" +
+                    "  * Design tempting distractor options based on common developer misconceptions (e.g., subtle compilation errors, alternate evaluation orders, runtime exceptions).\n" +
+                    "- FOR CONCEPTUAL QUESTIONS:\n" +
+                    "  * Deep JVM internals, Java Memory Model (JMM happens-before guarantees, cache invalidation, CAS operations), architectural trade-offs, and edge-case concurrency.";
+        } else if (level.contains("beg")) {
+            return "EXPERIENCE LEVEL: BEGINNER / FOUNDATIONAL:\n" +
+                    "- Focus on foundational Java syntax, control structures, standard OOP mechanisms, essential collection usage, and clear exception handling.";
+        } else {
+            return "EXPERIENCE LEVEL: INTERMEDIATE / PROFESSIONAL:\n" +
+                    "- Focus on real-world idiomatic Java, OOP design, collection framework internals (HashMap collision chaining, ArrayList growth), Stream pipelines, concurrency basics (Executors, CompletableFuture), and practical interview scenarios.";
+        }
     }
 }
