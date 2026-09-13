@@ -21,6 +21,7 @@ public class PracticeService {
 
     private static final Logger log = LoggerFactory.getLogger(PracticeService.class);
 
+    private final GroqService groqService;
     private final GeminiService geminiService;
     private final QuestionBankService questionBankService;
 
@@ -30,8 +31,10 @@ public class PracticeService {
     private final Map<String, TestAttempt> attemptCache = new ConcurrentHashMap<>();
 
     public PracticeService(
+            GroqService groqService,
             GeminiService geminiService,
             QuestionBankService questionBankService) {
+        this.groqService = groqService;
         this.geminiService = geminiService;
         this.questionBankService = questionBankService;
     }
@@ -57,22 +60,42 @@ public class PracticeService {
         List<Question> collected = new ArrayList<>();
         Set<String> seenQuestions = new HashSet<>();
 
-        // 1. Fetch questions from Gemini
+        // 1. Primary: Fast generation via Groq API (LPUs)
         try {
-            List<Question> aiQuestions = geminiService.generateQuestions(topics, exp, targetCount)
-                    .get(45, java.util.concurrent.TimeUnit.SECONDS);
+            List<Question> groqQuestions = groqService.generateQuestions(topics, exp, targetCount)
+                    .get(20, java.util.concurrent.TimeUnit.SECONDS);
 
-            for (Question q : aiQuestions) {
-                if (collected.size() >= targetCount) break;
-                if (isTopicAllowed(q.getTopic(), topics) && seenQuestions.add(normalizeText(q.getQuestion()))) {
-                    collected.add(q);
+            if (groqQuestions != null) {
+                for (Question q : groqQuestions) {
+                    if (collected.size() >= targetCount) break;
+                    if (isTopicAllowed(q.getTopic(), topics) && seenQuestions.add(normalizeText(q.getQuestion()))) {
+                        collected.add(q);
+                    }
                 }
             }
         } catch (Exception e) {
-            log.warn("Gemini batch generation note: {}. Using question bank.", e.getMessage());
+            log.warn("Groq batch generation note: {}. Trying backup providers.", e.getMessage());
         }
 
-        // 2. Fill remaining from diverse question bank strictly for selected topics
+        // 2. Backup: Gemini API if Groq was short
+        if (collected.size() < targetCount) {
+            try {
+                int stillNeeded = targetCount - collected.size();
+                List<Question> aiQuestions = geminiService.generateQuestions(topics, exp, stillNeeded)
+                        .get(20, java.util.concurrent.TimeUnit.SECONDS);
+
+                for (Question q : aiQuestions) {
+                    if (collected.size() >= targetCount) break;
+                    if (isTopicAllowed(q.getTopic(), topics) && seenQuestions.add(normalizeText(q.getQuestion()))) {
+                        collected.add(q);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Gemini batch generation note: {}. Using question bank.", e.getMessage());
+            }
+        }
+
+        // 3. Fill remaining from diverse question bank strictly for selected topics
         if (collected.size() < targetCount) {
             int needed = targetCount - collected.size();
             List<Question> bankQuestions = questionBankService.generateDynamicJavaQuestions(topics, exp, "Medium", needed);
@@ -84,7 +107,7 @@ public class PracticeService {
             }
         }
 
-        // 3. Fallback synthesis strictly for selected topics if still short
+        // 4. Fallback synthesis strictly for selected topics if still short
         int seed = 1;
         while (collected.size() < targetCount) {
             String topic = topics.get(collected.size() % topics.size());
@@ -180,9 +203,16 @@ public class PracticeService {
 
         Question replacement = null;
         try {
-            replacement = geminiService.changeQuestion(topic, diff, exp, previouslyUsed)
-                    .get(15, java.util.concurrent.TimeUnit.SECONDS);
+            replacement = groqService.changeQuestion(topic, diff, exp, previouslyUsed)
+                    .get(8, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception ignored) {}
+
+        if (replacement == null || !groqService.isValidQuestion(replacement)) {
+            try {
+                replacement = geminiService.changeQuestion(topic, diff, exp, previouslyUsed)
+                        .get(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {}
+        }
 
         if (replacement == null || !geminiService.isValidQuestion(replacement)) {
             replacement = questionBankService.createAlgorithmicOutputQuestion(topic, diff, exp);

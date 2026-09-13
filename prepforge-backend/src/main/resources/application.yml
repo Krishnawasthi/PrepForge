@@ -9,6 +9,13 @@ spring:
   cache:
     type: simple
 
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+    base-url: https://api.groq.com/openai/v1
+    model: openai/gpt-oss-120b
+    timeout-ms: 30000
+
 gemini:
   api:
     key: ${GEMINI_API_KEY:}

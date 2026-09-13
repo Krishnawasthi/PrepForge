@@ -21,6 +21,9 @@ public class WebClientConfig {
     @Value("${gemini.api.timeout-ms:60000}")
     private int timeoutMs;
 
+    @Value("${groq.api.base-url:https://api.groq.com/openai/v1}")
+    private String groqBaseUrl;
+
     @Bean
     public WebClient geminiWebClient() {
         HttpClient httpClient = HttpClient.create()
@@ -29,6 +32,20 @@ public class WebClientConfig {
 
         return WebClient.builder()
                 .baseUrl(geminiBaseUrl)
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                .build();
+    }
+
+    @Bean
+    public WebClient groqWebClient() {
+        HttpClient httpClient = HttpClient.create()
+                .resolver(DefaultAddressResolverGroup.INSTANCE)
+                .responseTimeout(Duration.ofMillis(30000));
+
+        return WebClient.builder()
+                .baseUrl(groqBaseUrl)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
